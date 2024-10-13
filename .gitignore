@@ -2,4 +2,4 @@ venv
 .env
 sample
 documents
-vector_store
+database
