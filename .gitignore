@@ -1,5 +1,11 @@
+# Venv
 venv
 .env
+
+# Documents and stuff
 sample
 documents
-database
+models
+
+# Others
+__pycache__
