@@ -8,6 +8,8 @@ from langchain_huggingface import HuggingFacePipeline
 from transformers import pipeline
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains.combine_documents import create_stuff_documents_chain
+import gc
+import torch
 
 from .document_loader import load_documents
 
@@ -86,9 +88,10 @@ def initialize_llm(model_name: str = 'distilgpt2', max_new_tokens: int = 1024, t
             tokenizer=model_save_path,
             max_new_tokens=max_new_tokens,
             framework="pt",
-            device_map="auto",
+            device_map="balanced_low_0",
             return_full_text=False
         )
+        # assert text_gen_pipeline.tokenizer.vocab_size == text_gen_pipeline.model.config.vocab_size, "Tokenizer and model vocab size mismatch."
     else:
         # Get the model size before downloading
         print(
@@ -101,9 +104,10 @@ def initialize_llm(model_name: str = 'distilgpt2', max_new_tokens: int = 1024, t
             max_new_tokens=max_new_tokens,
             do_sample=True,
             temperature=temperature,
-            device_map="auto",
+            device_map="balanced_low_0",
             return_full_text=False
         )
+        # assert text_gen_pipeline.tokenizer.vocab_size == text_gen_pipeline.model.config.vocab_size, "Tokenizer and model vocab size mismatch."
 
         # Save the model and tokenizer
         text_gen_pipeline.model.save_pretrained(model_save_path)
@@ -136,3 +140,20 @@ def initialize_qa_chain(llm, vectorstore: FAISS, prompt_template: ChatPromptTemp
     document_chain = create_stuff_documents_chain(
         llm, prompt_template)
     return create_retrieval_chain(vectorstore.as_retriever(search_kwargs={"k": top_k}), document_chain)
+
+
+def unload_model(text_gen_pipeline):
+    try:
+        torch.cuda.empty_cache()
+    except:
+        pass
+
+    # Delete the model and tokenizer
+    del text_gen_pipeline.model
+    del text_gen_pipeline.tokenizer
+
+    # Delete the pipeline
+    del text_gen_pipeline
+
+    # Run garbage collection
+    gc.collect()
