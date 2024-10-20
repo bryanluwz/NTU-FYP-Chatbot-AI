@@ -22,6 +22,7 @@ class QA_Chain:
     def __init__(self):
         self.embeddings = None
         self.vector_store = None
+        self.vector_store_path = None
         self.llm = None
         self.qa_chain = None
         self.text_gen_pipeline = None
@@ -52,6 +53,9 @@ class QA_Chain:
                     vector_store_path, self.embeddings, allow_dangerous_deserialization=True)
                 print("✅ Loaded vector store from local storage.")
                 self.vector_store = persisted_vectorstore
+
+                self.vector_store_path = vector_store_path
+
             else:
                 raise FileNotFoundError
         except FileNotFoundError:
@@ -90,6 +94,7 @@ class QA_Chain:
         vectorstore.save_local(vector_store_path)
         print("💾 Vector store saved locally.")
 
+        self.vector_store_path = vector_store_path
         self.vector_store = vectorstore
 
     def initialize_llm(self, model_name: str = 'distilgpt2', max_new_tokens: int = 1024, temperature: float = 0.7, model_path: str = None, device: int = -1):
@@ -144,6 +149,10 @@ class QA_Chain:
         assert self.llm is not None, "LLM model not initialized."
         assert self.vector_store is not None, "Vector store not initialized."
 
+        if self.qa_chain is not None:
+            del self.qa_chain
+            gc.collect()
+
         if prompt_template is None:
             system_prompt = (
                 "You are an teaching assistant at a university. "
@@ -167,7 +176,7 @@ class QA_Chain:
         self.qa_chain = create_retrieval_chain(
             self.vector_store.as_retriever(search_kwargs={"k": top_k}), document_chain)
 
-    def destroy(self):
+    def self_detox(self):
         try:
             torch.cuda.empty_cache()
         except:
@@ -182,7 +191,16 @@ class QA_Chain:
             del self.text_gen_pipeline
             del self.llm
             del self.qa_chain
-        except:
+
+            # Set all to None
+            self.text_gen_pipeline = None
+            self.llm = None
+            self.qa_chain = None
+            self.embeddings = None
+            self.vector_store = None
+            self.vector_store_path = None
+        except Exception as e:
+            print(f"[!] Error while destroying the QA chain: {e}")
             pass
 
         # Run garbage collection

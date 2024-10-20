@@ -1,18 +1,9 @@
 from flask import Flask, request, jsonify
+from routes.chat_routes import chat_bp
 
 app = Flask(__name__)
 
-
-@app.route('/query', methods=['POST'])
-def process_request():
-    data = request.get_json()
-    print(data)
-    response = {
-        'data': {
-            'response': 'Received the data successfully!'
-        }
-    }
-    return jsonify(response), 200
+app.register_blueprint(chat_bp, url_prefix='/api/chat')
 
 
 @app.route('/', methods=['GET'])
