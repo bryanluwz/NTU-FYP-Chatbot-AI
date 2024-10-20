@@ -13,6 +13,8 @@ import torch
 
 from .document_loader import load_documents
 
+from datetime import datetime
+
 
 class QA_Chain:
     """
@@ -206,10 +208,22 @@ class QA_Chain:
         # Run garbage collection
         gc.collect()
 
+    def yeet_qa_chain(self):
+        """Delete the QA chain and free up memory."""
+        if self.qa_chain is not None:
+            del self.qa_chain
+            self.qa_chain = None
+
+        gc.collect
+
     def query(self, query):
         """Query the QA chain with the given input."""
         assert self.qa_chain is not None, "QA chain not initialized."
-
-        return self.qa_chain.invoke({
+        timestamp = datetime.now().strftime("%Y%m%d %H%M%S")
+        print(f"[{timestamp}] Querying the QA chain...")
+        output = self.qa_chain.invoke({
             "input": query,
         })
+        timestamp = datetime.now().strftime("%Y%m%d %H%M%S")
+        print(f"[{timestamp}] Query complete.")
+        return output
