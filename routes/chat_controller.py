@@ -1,5 +1,8 @@
 from flask import request, jsonify
 from src.QA_Chain import QA_Chain
+from src.LLM_Chain import LLM_Chain
+from src.Multiple_Chain import Multi_Chain
+from src.Multiple_Chain_QA import Multi_Chain_QA
 
 import os
 from dotenv import dotenv_values
@@ -18,6 +21,20 @@ if torch.cuda.is_available():
 config = dotenv_values(".env")
 
 MODEL_NAME = 'meta-llama/Llama-3.2-1B-Instruct'
+# MODEL_NAME = 'meta-llama/Llama-3.2-1B'
+# MODEL_NAME = 'google/flan-t5-large'
+# MODEL_NAME = 'distilgpt2'
+# MODEL_NAME = 'deepset/roberta-base-squad2'
+# TASK = 'question-answering'
+TASK = 'text-generation'
+# TASK = 'text2text-generation'
+
+# SUMMARIZER_MODEL_NAME = 'google/flan-t5-base'
+# SUMMARIZER_TASK = 'text2text-generation'
+# SUMMARIZER_MODEL_NAME = 'meta-llama/Llama-3.2-1B'
+SUMMARIZER_MODEL_NAME = 'meta-llama/Llama-3.2-1B-Instruct'
+SUMMARIZER_TASK = 'text-generation'
+
 EMBEDDING_NAME = 'sentence-transformers/paraphrase-MiniLM-L6-v2'
 
 EMBEDDING_MODEL_PATH = os.path.abspath(config.get(
@@ -60,10 +77,13 @@ def list_all_files(directory):
 
 
 # Intialise the QA Chain, but don't load the vector store and init qa chain
-qa_chain = QA_Chain()
+qa_chain = Multi_Chain(debug=True)
 qa_chain.load_embeddings_model(EMBEDDING_NAME, EMBEDDING_MODEL_PATH)
 qa_chain.initialize_llm(model_name=MODEL_NAME,
-                        max_new_tokens=512, model_path=LLM_MODEL_PATH, temperature=0.5)
+                        max_new_tokens=512, model_path=LLM_MODEL_PATH, temperature=0.5, task=TASK)
+
+qa_chain.initialize_summarizer(
+    model_name=SUMMARIZER_MODEL_NAME, model_path=LLM_MODEL_PATH, task=SUMMARIZER_TASK)
 
 
 """
@@ -76,6 +96,7 @@ def query():
     data = request.get_json()
     user_message = data.get('message', '')
     document_src_name = data.get('personaId', None)
+    chat_history = data.get('chatHistory', None)
 
     if document_src_name is None:
         raise ValueError("documentSrc is not set")
@@ -84,8 +105,10 @@ def query():
     vector_store_path = os.path.join(
         VECTOR_STORE_PATH, f"{document_dir_name}_{qa_chain.embeddings.model_name}")
 
+    is_new_vector_store = False
+
     # Load vector store when necessary
-    if qa_chain.vector_store is None or qa_chain.vector_store_path is None or qa_chain.qa_chain != vector_store_path:
+    if qa_chain.vector_store is None or qa_chain.vector_store_path is None or qa_chain.vector_store_path != vector_store_path:
         print("[!] Loading vector store...")
 
         print("[!] Vector store path:", vector_store_path)
@@ -107,18 +130,31 @@ def query():
         file_paths_abs = [os.path.abspath(file_path)
                           for file_path in file_paths]
         qa_chain.load_vector_store(vector_store_path, file_paths_abs)
+
+        is_new_vector_store = True
     else:
         print("[!] Vector store already loaded, skipping...")
 
     # Initialize the QA Chain when necessary
-    if qa_chain.qa_chain is None:
-        print("[!] Initializing QA Chain...")
-        qa_chain.initialize_qa_chain()
-    else:
-        print("[!] QA Chain already initialized, skipping...")
+    if isinstance(qa_chain, LLM_Chain):
+        if qa_chain.qa_chain is None or is_new_vector_store:
+            print("[!] Initializing QA Chain...")
+            qa_chain.initialize_qa_chain(top_k=4)
+        else:
+            print("[!] QA Chain already initialized, skipping...")
+    elif isinstance(qa_chain, Multi_Chain):
+        if qa_chain.qa_chain is None or is_new_vector_store:
+            print("[!] Initializing QA Chain...")
+            qa_chain.initialize_qa_chain(top_k=2)
+        else:
+            print("[!] QA Chain already initialized, skipping...")
 
-    bot_response = qa_chain.query(user_message)
-    answer = bot_response['answer']
+    # bot_response = qa_chain.query(
+    #     user_message, chat_history, chat_history_truncate_num=0)
+    # answer = bot_response['answer']
+
+    answer = qa_chain.query_without_pipeline(
+        user_message, chat_history, chat_history_truncate_num=4)
 
     return jsonify({
         "success": True,
@@ -126,10 +162,8 @@ def query():
             'response': answer}})
 
 
-"""Upload and transfer documents from BE server to this server"""
-
-
 def transferDocumentSrc():
+    """Upload and transfer documents from BE server to this server"""
     data = request.form
     personaId = data.get('personaId', None)
 

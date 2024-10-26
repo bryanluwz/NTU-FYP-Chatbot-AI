@@ -1,23 +1,24 @@
+from datetime import datetime
 import os
 import shutil
-from typing import List
-from langchain_core.documents.base import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import CharacterTextSplitter
+from langchain.chains import create_history_aware_retriever
+from langchain.chains.retrieval import create_retrieval_chain
+from langchain_huggingface import HuggingFacePipeline
 from transformers import pipeline
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.chains.combine_documents import create_stuff_documents_chain
 import gc
 import torch
 
-from src.functions import ChatMessageModel, convert_to_langchain_messages
+from src.functions import convert_to_langchain_messages
 
 from .document_loader import load_documents
 
-from datetime import datetime
 
-
-class QA_Chain:
+class LLM_Chain:
     """
     Retrieval QA Chain for answering queries given context
     """
@@ -27,6 +28,7 @@ class QA_Chain:
         self.vector_store = None
         self.vector_store_path = None
         self.llm = None
+        self.qa_chain = None
         self.text_gen_pipeline = None
 
     def load_embeddings_model(self, model_name: str = "paraphrase-MiniLM-L6-v2", embedding_model_path: str = "embedding_models"):
@@ -116,8 +118,7 @@ class QA_Chain:
                 tokenizer=model_save_path,
                 max_new_tokens=max_new_tokens,
                 framework="pt",
-                device_map="balanced_low_0",
-                return_full_text=False
+                device_map="balanced_low_0"
             )
             # assert text_gen_pipeline.tokenizer.vocab_size == text_gen_pipeline.model.config.vocab_size, "Tokenizer and model vocab size mismatch."
         else:
@@ -132,8 +133,7 @@ class QA_Chain:
                 max_new_tokens=max_new_tokens,
                 do_sample=True,
                 temperature=temperature,
-                device_map="balanced_low_0",
-                return_full_text=False
+                device_map="balanced_low_0"
             )
             # assert text_gen_pipeline.tokenizer.vocab_size == text_gen_pipeline.model.config.vocab_size, "Tokenizer and model vocab size mismatch."
 
@@ -144,75 +144,73 @@ class QA_Chain:
 
         self.text_gen_pipeline = text_gen_pipeline
 
-        self.llm = text_gen_pipeline
+        self.llm = HuggingFacePipeline(pipeline=text_gen_pipeline)
 
-    def query(self, query, chat_history, top_k: int = 5):
-        """Query the QA chain with the given input."""
-        assert self.llm is not None, "QA chain not initialized."
+    def initialize_qa_chain(self, prompt_template: ChatPromptTemplate | None = None, top_k: int = 5):
+        """Initialize the RetrievalQA chain with the given LLM and vectorstore."""
+        assert self.llm is not None, "LLM model not initialized."
         assert self.vector_store is not None, "Vector store not initialized."
 
-        system_prompt = (
-            "You are an teaching assistant at a university. "
-            "If you don't know the answer, say that you "
-            "don't know. Use three sentences maximum and keep the "
-            "answer concise."
+        # History
+        contextualize_q_system_prompt = (
+            "Given a chat history and the latest user question "
+            "which might reference context in the chat history, "
+            "formulate a standalone question which can be understood "
+            "without the chat history. Do NOT answer the question, "
+            "just reformulate it if needed and otherwise return it as is."
         )
-
-        prompt_template = ChatPromptTemplate.from_messages(
-            [
-                ("system", system_prompt),
-                ("human", "{input}"),
-            ]
-        )
-
-        timestamp = datetime.now().strftime("%Y%m%d %H%M%S")
-        print(f"[{timestamp}] Getting context")
-
-        context: List[Document] = self.get_context(query, chat_history, top_k)
-        context_stringified = "\n\n".join(
-            [f"{i+1}. {c.page_content}" for i, c in enumerate(context)])
-
-        print("Context:", context_stringified)
-
-        timestamp = datetime.now().strftime("%Y%m%d %H%M%S")
-        print(f"[{timestamp}] Generating response")
-
-        # output = self.llm(prompt_template.invoke({
-        #     "context": context,
-        #     "input": query
-        # }).to_string())
-        output = self.llm({
-            "context": context_stringified,
-            "question": prompt_template.invoke({
-                "input": query
-            }).to_string()
-        })
-
-        timestamp = datetime.now().strftime("%Y%m%d %H%M%S")
-        print(f"[{timestamp}] Query complete.")
-
-        return output
-
-    def get_context(self, query, chat_history, top_k: int = 5):
-        contextualize_q_system_prompt = """Given a chat history and the latest user question \
-        which might reference context in the chat history, formulate a standalone question \
-        which can be understood without the chat history. Do NOT answer the question, \
-        just reformulate it if needed and otherwise return it as is."""
 
         contextualize_q_prompt = ChatPromptTemplate.from_messages(
             [
                 ("system", contextualize_q_system_prompt),
                 MessagesPlaceholder("chat_history"),
-                ("human", "{query}"),
+                ("human", "{input}"),
             ]
         )
+        history_aware_retriever = create_history_aware_retriever(
+            self.llm, self.vector_store.as_retriever(
+                search_kwargs={"k": top_k}), contextualize_q_prompt
+        )
 
-        prompt = contextualize_q_prompt.invoke({
-            "chat_history": convert_to_langchain_messages(chat_history),
-            "query": query
-        }).to_string()
+        if self.qa_chain is not None:
+            del self.qa_chain
+            gc.collect()
 
-        return self.vector_store.similarity_search(prompt, k=top_k)
+        if prompt_template is None:
+            system_prompt = (
+                "You are an teaching assistant at a university. "
+                "Use the following pieces of retrieved context to answer "
+                "the question. If you don't know the answer, say that you "
+                "don't know. Use three sentences maximum and keep the "
+                "answer concise."
+                "\n\n"
+                "{context}"
+            )
+
+            prompt_template = ChatPromptTemplate.from_messages(
+                [
+                    ("system", system_prompt),
+                    ("human", "{input}"),
+                ]
+            )
+
+        document_chain = create_stuff_documents_chain(
+            self.llm, prompt_template)
+        self.qa_chain = create_retrieval_chain(
+            history_aware_retriever, document_chain)
+
+    def query(self, query, chat_history):
+        """Query the QA chain with the given input."""
+        assert self.qa_chain is not None, "QA chain not initialized."
+        timestamp = datetime.now().strftime("%Y%m%d %H%M%S")
+        print(f"[{timestamp}] Querying the QA chain...")
+        output = self.qa_chain.invoke({
+            "input": query,
+            "chat_history": convert_to_langchain_messages(chat_history)
+        })
+        timestamp = datetime.now().strftime("%Y%m%d %H%M%S")
+        print(f"[{timestamp}] Query complete.")
+        return output
 
     def kys(self):
         try:
@@ -228,10 +226,12 @@ class QA_Chain:
             # Delete the pipeline
             del self.text_gen_pipeline
             del self.llm
+            del self.qa_chain
 
             # Set all to None
             self.text_gen_pipeline = None
             self.llm = None
+            self.qa_chain = None
             self.embeddings = None
             self.vector_store = None
             self.vector_store_path = None
