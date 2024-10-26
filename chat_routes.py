@@ -1,6 +1,6 @@
 from flask import Blueprint
 
-from .chat_controller import query, transferDocumentSrc
+from chat_controller import query, transferDocumentSrc
 
 chat_bp = Blueprint('chat', __name__)
 

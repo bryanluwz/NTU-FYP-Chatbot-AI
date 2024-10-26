@@ -1,6 +1,10 @@
-from flask import Flask, request, jsonify
-from routes.chat_routes import chat_bp
+from flask import Flask
+from chat_routes import chat_bp
 
+import torch
+
+
+# App stuff
 app = Flask(__name__)
 
 app.register_blueprint(chat_bp, url_prefix='/api/chat')
