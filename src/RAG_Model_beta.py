@@ -15,12 +15,11 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import CharacterTextSplitter
 from transformers import pipeline
-import torch
 
 from .document_loader import load_documents
 
 
-class RAG_Model_beta:
+class RAG_Model:
     def __init__(self, debug=False):
         self.embeddings = None
         self.vector_store = None
@@ -247,18 +246,17 @@ class RAG_Model_beta:
         self._debug_print("Querying the QA chain...")
 
         contextualize_q_system_prompt = (
-            "Given a chat history and the latest user question "
-            "which might reference prior context, rephrase the question "
-            "as a standalone question understandable without prior context. "
-            "Do NOT add new information, make assumptions, or create your own questions. "
-            "If rephrasing is not possible without assumptions, return the question exactly as it is. "
+            "As a friendly university teaching assistant, given a chat history and the latest user question "
+            "which might reference prior context, rephrase the question as a standalone question understandable "
+            "without prior context. Do NOT add new information, make assumptions, or create your own questions. "
+            "If rephrasing is not possible without assumptions, return the question exactly as it is."
         )
 
         reformulated_query = self.summarizer_pipeline(
             [
                 {"role": "system", "content": contextualize_q_system_prompt},
                 *self._convert_to_pipeline_inputs(truncated_chat_history),
-                {"role": "human", "content": query}
+                {"role": "human", "content": f"User question: {query}"}
             ]
         )[0]['generated_text'][-1]
 
@@ -273,16 +271,16 @@ class RAG_Model_beta:
 
         # Rank documents based on usefulness via Cross Encoder
         context_ranked = self._rerank_documents(
-            context, query, top_k=top_k)
+            context, reformulated_query["content"], top_k=top_k)
 
         # Restructure the final prompt passed into LLM
         system_prompt = f"""
-You are a friendly teaching assistant at a university. 
-Use the following pieces of retrieved context to answer the question as accurately as possible. 
-Keep your responses concise, using a maximum of three sentences. 
-1. Provide the best possible response based on the information available. 
-2. If you're unsure, respond in a friendly manner and share any relevant insights you have.
-3. If the question isn't clear or doesn't align with the context, feel free to provide your general knowledge while mentioning that you are doing so.
+You are a friendly teaching assistant at a university.
+Always use the given context to answer questions as accurately as possible.
+Use the minimum amount of sentences needed to provide a correct answer. Do not be to verbose.
+1. Provide the best answer based on the provided context. 
+2. If there's no context available, kindly mention that clarification or additional details are needed. Do not mention the lack of context in the answer.
+3. For questions that don't require specific context (general questions), answer using your general knowledge.
 4. For greetings or casual conversation, respond warmly and engage in a friendly dialogue.
 Context: {context_ranked}""".replace("\n", " ")
 
