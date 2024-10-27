@@ -250,6 +250,7 @@ class RAG_Model:
             "which might reference prior context, rephrase the question as a standalone question understandable "
             "without prior context. Do NOT add new information, make assumptions, or create your own questions. "
             "If rephrasing is not possible without assumptions, return the question exactly as it is."
+            "Do NOT answer the question. Just rephrase it."
         )
 
         reformulated_query = self.summarizer_pipeline(
@@ -270,8 +271,15 @@ class RAG_Model:
             reformulated_query["content"], k=search_k)
 
         # Rank documents based on usefulness via Cross Encoder
-        context_ranked = self._rerank_documents(
-            context, reformulated_query["content"], top_k=top_k)
+        try:
+            context_ranked = self._rerank_documents(
+                context, reformulated_query["content"], top_k=top_k)
+        except:
+            try:
+                context_ranked = self._rerank_documents(
+                    context, query, top_k=top_k)
+            except:
+                context_ranked = context
 
         # Restructure the final prompt passed into LLM
         system_prompt = f"""
