@@ -2,7 +2,7 @@
 This file contains all the RAG model stuffs
 """
 
-from src.RAG_Model_beta import RAG_Model
+from src.RAG_Model import RAG_Model
 
 import os
 from dotenv import dotenv_values
