@@ -9,3 +9,6 @@ models
 
 # Others
 __pycache__
+
+server.cert
+server.key
