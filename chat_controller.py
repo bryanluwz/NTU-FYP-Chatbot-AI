@@ -1,4 +1,4 @@
-from flask import request, jsonify
+from flask import request, jsonify, json
 from src.functions import list_all_files
 
 import os
@@ -32,16 +32,23 @@ qa_model = None
 
 
 def query():
+    print(request.form, request.files)
+    # Get info
+    message_info = json.loads(request.form.get("messageInfo"))
+
+    user_message = message_info['messageText']
+    document_src_name = message_info['personaId']
+    chat_history = message_info['chatHistory']
+
+    # Files will temporarily not be used
+    files = request.files.getlist("files")
+
+    # Create RAG model if none
     global qa_model
 
     if qa_model is None:
         print("[!] Creating RAG model beep beep boop...")
         qa_model = create_rag_model(debug=True)
-
-    data = request.get_json()
-    user_message = data.get('message', '')
-    document_src_name = data.get('personaId', None)
-    chat_history = data.get('chatHistory', None)
 
     if document_src_name is None:
         raise ValueError("documentSrc is not set")
