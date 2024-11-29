@@ -3,11 +3,11 @@ from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, Te
 
 
 def load_documents(file_paths):
-    """Load multiple documents from various formats into a single list of documents."""
+    """Load multiple documents from various formats into a single list of documents with metadata."""
     documents = []
 
     for file_path in file_paths:
-        if (not os.path.exists(file_path)):
+        if not os.path.exists(file_path):
             print(f"❌ File not found: {file_path}")
             continue
         print(f"📄 Loading: {file_path}")
@@ -23,6 +23,13 @@ def load_documents(file_paths):
             print(f"❌ Unsupported file format: {ext}")
             continue
 
-        documents.extend(loader.load())  # Load document and add to list
+        loaded_docs = loader.load()  # Load document
+        for doc in loaded_docs:
+            doc.metadata = {
+                "file_name": os.path.basename(file_path),
+                "file_path": file_path,
+                # Add other metadata as needed
+            }
+            documents.append(doc)
 
     return documents

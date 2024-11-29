@@ -1,5 +1,6 @@
 from flask import request, jsonify, json
 from src.functions import list_all_files
+import shutil
 
 import os
 import zipfile
@@ -97,8 +98,6 @@ def transferDocumentSrc():
     data = request.form
     personaId = data.get('personaId', None)
 
-    print(request.files, data)
-
     if 'documentSrc' not in request.files:
         return jsonify({
             "status": {
@@ -120,13 +119,32 @@ def transferDocumentSrc():
     if file:
         document_src_name = personaId
         dir_name = get_document_dir_path(document_dir_name=document_src_name)
+
+        # Clear directory and create new one
         os.makedirs(dir_name, exist_ok=True)
+        shutil.rmtree(dir_name)
+        os.makedirs(dir_name, exist_ok=True)
+
         filename = os.path.join(dir_name, file.filename)
         file.save(filename)
 
         unzip_dir = os.path.dirname(filename)
         with zipfile.ZipFile(filename, 'r') as zip_ref:
             zip_ref.extractall(unzip_dir)
+
+        # Clear vector store path if it exists
+        global qa_model
+
+        if qa_model is None:
+            print("[!] Creating RAG model beep beep boop...")
+            qa_model = create_rag_model(debug=True)
+
+        vector_store_path = os.path.join(
+            VECTOR_STORE_PATH, f"{document_src_name}_{qa_model.embeddings.model_name}")
+        shutil.rmtree(vector_store_path, ignore_errors=True)
+
+        # Stonks
+        print("[+] Document uploaded successfully")
 
         return jsonify({
             "status": {
