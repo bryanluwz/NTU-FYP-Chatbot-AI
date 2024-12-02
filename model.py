@@ -58,4 +58,5 @@ def create_rag_model(debug=False):
         model_name=CROSS_ENCODER_NAME, model_path=CROSS_ENCODER_MODEL_PATH)
     qa_model.initialize_llm(model_name=MODEL_NAME,
                             max_new_tokens=512, model_path=LLM_MODEL_PATH, temperature=0.5, task=TASK)
+    # TODO: add initialize clip thingy here
     return qa_model

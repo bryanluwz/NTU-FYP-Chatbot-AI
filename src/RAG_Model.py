@@ -18,6 +18,8 @@ from transformers import pipeline
 
 from .document_loader import load_documents
 
+import pytesseract
+
 
 class RAG_Model:
     def __init__(self, debug=False):
@@ -27,6 +29,7 @@ class RAG_Model:
 
         self.llm_pipeline = None
         self.summarizer_pipeline = None
+        self.clip_pipeline = None
 
         self.document_reranker_pipeline = None
 
@@ -99,7 +102,11 @@ class RAG_Model:
         os.makedirs(vector_store_path, exist_ok=True)
 
         # Load document using PyPDFLoader
-        documents = load_documents(file_paths)
+        # TODO: Need to add support for images here too
+        # documents = load_documents(
+        #     file_paths, describe_image_callback=self._describe_image)
+        documents = load_documents(
+            file_paths, describe_image_callback=None)
 
         # Split document into chunks
         text_splitter = CharacterTextSplitter(
@@ -160,6 +167,36 @@ class RAG_Model:
         self.llm_pipeline = text_gen_pipeline
 
         self.summarizer_pipeline = text_gen_pipeline
+
+    def initialize_clip(self, model_name: str = 'openai/clip-vit-base-patch32', model_path: str = None):
+        """
+        Initialize the CLIP pipeline for image and text encoding.
+        """
+        model_save_path = os.path.join(model_path, model_name)
+
+        # Check if the model is already saved
+        if os.path.exists(model_save_path):
+            print(f"🔄 Loading CLIP model from {model_save_path}...")
+            clip_pipeline = pipeline(
+                task="image-classification",
+                model=model_save_path,
+                tokenizer=model_save_path,
+            )
+        else:
+            # Get the model size before downloading
+            print(
+                f"⬇️ Downloading and saving CLIP model '{model_name}' to {model_save_path}...")
+            clip_pipeline = pipeline(
+                task="image-classification",
+                model=model_name,
+                tokenizer=model_name,
+            )
+
+            # Save the model
+            clip_pipeline.save_pretrained(model_save_path)
+            print(f"✅ CLIP model '{model_name}' saved to {model_save_path}.")
+
+        self.clip_pipeline = clip_pipeline
 
     def initialize_cross_encoder(self, model_name: str = 'cross-encoder/ms-marco-MiniLM-L-6-v2', model_path: str = None):
         """
@@ -226,6 +263,56 @@ class RAG_Model:
 
         reranked_docs = sorted(scored_docs, key=lambda x: x[1], reverse=True)
         return [doc for doc, _ in reranked_docs][:top_k]
+
+    def _describe_images(self, image_paths: list[str]):
+        """
+        Describe the image using the CLIP model. (and also OCR)
+        """
+        assert self.clip_pipeline is not None, "CLIP pipeline not initialized."
+
+        descs = []
+
+        for image_path in image_paths:
+            # Get description
+            image_description = self.clip_pipeline(image_path)[0]
+
+            # Get OCR text
+            ocr_text = pytesseract.image_to_string(image_path)
+
+            descs.append({"description": image_description, "text": ocr_text})
+
+        return descs
+
+    def _describe_image(self, image_path: str):
+        """
+        Describe the image using the CLIP model. (and also OCR)
+        """
+        assert self.clip_pipeline is not None, "CLIP pipeline not initialized."
+
+        # Get description
+        image_description = self.clip_pipeline(image_path)[0]
+
+        # Get OCR text
+        ocr_text = pytesseract.image_to_string(image_path)
+
+        return {"description": image_description, "text": ocr_text}
+
+    def _load_input_documents(self, file_paths: list[str]):
+        """
+        Load the input documents from the given file paths.
+        """
+        # Load document using PyPDFLoader
+        documents = load_documents(file_paths)
+
+        # Split document into chunks
+        text_splitter = CharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=30,
+            separator="\n"
+        )
+        docs = text_splitter.split_documents(documents)
+
+        return docs
 
     def query(self, query: str, chat_history: list[any], chat_history_truncate_num=5, search_k=10, top_k=2):
         """

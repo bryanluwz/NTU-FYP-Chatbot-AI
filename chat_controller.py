@@ -33,7 +33,6 @@ qa_model = None
 
 
 def query():
-    print(request.form, request.files)
     # Get info
     message_info = json.loads(request.form.get("messageInfo"))
 
@@ -41,7 +40,7 @@ def query():
     document_src_name = message_info['personaId']
     chat_history = message_info['chatHistory']
 
-    # Files will temporarily not be used
+    # Files of images and documents
     files = request.files.getlist("files")
 
     # Create RAG model if none
@@ -84,6 +83,7 @@ def query():
     else:
         print("[!] Vector store already loaded, skipping...")
 
+    # Here should also pass the files too
     answer = qa_model.query(
         user_message, chat_history, chat_history_truncate_num=4)
 
