@@ -19,6 +19,7 @@ from transformers import pipeline
 from .document_loader import load_documents
 
 import pytesseract
+from PIL import Image
 
 
 class RAG_Model:
@@ -29,7 +30,7 @@ class RAG_Model:
 
         self.llm_pipeline = None
         self.summarizer_pipeline = None
-        self.clip_pipeline = None
+        self.blip_pipeline = None
 
         self.document_reranker_pipeline = None
 
@@ -102,11 +103,11 @@ class RAG_Model:
         os.makedirs(vector_store_path, exist_ok=True)
 
         # Load document using PyPDFLoader
-        # TODO: Need to add support for images here too
-        # documents = load_documents(
-        #     file_paths, describe_image_callback=self._describe_image)
+        # TODO: Need to add support for images here that are in the documents
         documents = load_documents(
-            file_paths, describe_image_callback=None)
+            file_paths, describe_image_callback=self._describe_image)
+        # documents = load_documents(
+        #     file_paths, describe_image_callback=None)
 
         # Split document into chunks
         text_splitter = CharacterTextSplitter(
@@ -168,35 +169,39 @@ class RAG_Model:
 
         self.summarizer_pipeline = text_gen_pipeline
 
-    def initialize_clip(self, model_name: str = 'openai/clip-vit-base-patch32', model_path: str = None):
+    def initialize_blip(self, model_name: str = 'Salesforce/blip-image-captioning-base', model_path: str = None, task: str = "image-to-text"):
         """
-        Initialize the CLIP pipeline for image and text encoding.
+        Initialize the BLIP pipeline for image and text encoding.
         """
         model_save_path = os.path.join(model_path, model_name)
 
         # Check if the model is already saved
         if os.path.exists(model_save_path):
-            print(f"🔄 Loading CLIP model from {model_save_path}...")
-            clip_pipeline = pipeline(
-                task="image-classification",
+            print(f"🔄 Loading BLIP model from {model_save_path}...")
+            blip_pipeline = pipeline(
+                task=task,
                 model=model_save_path,
                 tokenizer=model_save_path,
+                framework="pt",
+                device_map="auto"
             )
         else:
             # Get the model size before downloading
             print(
-                f"⬇️ Downloading and saving CLIP model '{model_name}' to {model_save_path}...")
-            clip_pipeline = pipeline(
-                task="image-classification",
+                f"⬇️ Downloading and saving BLIP model '{model_name}' to {model_save_path}...")
+            blip_pipeline = pipeline(
+                task=task,
                 model=model_name,
                 tokenizer=model_name,
+                framework="pt",
+                device_map="auto"
             )
 
             # Save the model
-            clip_pipeline.save_pretrained(model_save_path)
-            print(f"✅ CLIP model '{model_name}' saved to {model_save_path}.")
+            blip_pipeline.save_pretrained(model_save_path)
+            print(f"✅ BLIP model '{model_name}' saved to {model_save_path}.")
 
-        self.clip_pipeline = clip_pipeline
+        self.blip_pipeline = blip_pipeline
 
     def initialize_cross_encoder(self, model_name: str = 'cross-encoder/ms-marco-MiniLM-L-6-v2', model_path: str = None):
         """
@@ -266,36 +271,33 @@ class RAG_Model:
 
     def _describe_images(self, image_paths: list[str]):
         """
-        Describe the image using the CLIP model. (and also OCR)
+        Describe the image using the BLIP model. (and also OCR)
         """
-        assert self.clip_pipeline is not None, "CLIP pipeline not initialized."
+        assert self.blip_pipeline is not None, "BLIP pipeline not initialized."
 
         descs = []
 
         for image_path in image_paths:
-            # Get description
-            image_description = self.clip_pipeline(image_path)[0]
-
-            # Get OCR text
-            ocr_text = pytesseract.image_to_string(image_path)
-
-            descs.append({"description": image_description, "text": ocr_text})
+            image_desc, ocr_text = self._describe_image(image_path)
+            descs.append({'description': image_desc, 'ocr_text': ocr_text})
 
         return descs
 
     def _describe_image(self, image_path: str):
         """
-        Describe the image using the CLIP model. (and also OCR)
+        Describe the image using the BLIP model. (and also OCR)
         """
-        assert self.clip_pipeline is not None, "CLIP pipeline not initialized."
+        assert self.blip_pipeline is not None, "BLIP pipeline not initialized."
+
+        image = Image.open(image_path)
 
         # Get description
-        image_description = self.clip_pipeline(image_path)[0]
+        image_description = self.blip_pipeline(image)[0]['generated_text']
 
         # Get OCR text
         ocr_text = pytesseract.image_to_string(image_path)
 
-        return {"description": image_description, "text": ocr_text}
+        return image_description, ocr_text
 
     def _load_input_documents(self, file_paths: list[str]):
         """
@@ -314,7 +316,7 @@ class RAG_Model:
 
         return docs
 
-    def query(self, query: str, chat_history: list[any], chat_history_truncate_num=5, search_k=10, top_k=2):
+    def query(self, query: str, chat_history: list[any], chat_history_truncate_num=5, search_k=10, top_k=2, attached_file_paths=[]):
         """
         Query the QA chain with the given input.
 
@@ -350,8 +352,7 @@ class RAG_Model:
 
         self._debug_print(f"Reformulated query: {reformulated_query}")
 
-        # Check if the reformulated query need context or not
-        # WIP or not idk
+        # TODO: Just check if the reformulated query needs context or not
 
         # Get Context based on reformulated query
         context: List[Document] = self.vector_store.similarity_search(
@@ -368,7 +369,23 @@ class RAG_Model:
             except:
                 context_ranked = context
 
+        # Load the attached files (and images)
+        # TODO
+        attached_files_docs = self._load_input_documents(attached_file_paths)
+
+        # Rank attached files based on usefulness via Cross Encoder
+        try:
+            attached_files_ranked = self._rerank_documents(
+                attached_files_docs, reformulated_query["content"], top_k=top_k)
+        except:
+            try:
+                attached_files_ranked = self._rerank_documents(
+                    attached_files_docs, query, top_k=top_k)
+            except:
+                attached_files_ranked = attached_files_docs
+
         # Restructure the final prompt passed into LLM
+        # TODO: Add attached files and images to the prompt
         system_prompt = f"""
 You are a friendly teaching assistant at a university.
 Always use the given context to answer questions as accurately as possible.
@@ -377,7 +394,7 @@ Use the minimum amount of sentences needed to provide a correct answer. Do not b
 2. If there's no context available, kindly mention that clarification or additional details are needed. Do not mention the lack of context in the answer.
 3. For questions that don't require specific context (general questions), answer using your general knowledge.
 4. For greetings or casual conversation, respond warmly and engage in a friendly dialogue.
-Context: {context_ranked}""".replace("\n", " ")
+Context: {context_ranked} {attached_files_ranked}""".replace("\n", " ")
 
         messages = [
             {"role": "system", "content": system_prompt},

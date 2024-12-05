@@ -6,6 +6,7 @@ venv
 sample
 documents
 models
+temp_storage
 
 # Others
 __pycache__

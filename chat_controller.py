@@ -7,6 +7,17 @@ import zipfile
 
 from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME, VECTOR_STORE_PATH
 
+from dotenv import dotenv_values
+config = dotenv_values(".env")
+
+"""
+Initialise some stuff
+"""
+
+TEMP_STORAGE_PATH = os.path.abspath(
+    config.get('TEMP_STORAGE_PATH', './temp_storage'))
+os.makedirs(TEMP_STORAGE_PATH, exist_ok=True)
+
 
 """
 Helper functions
@@ -42,6 +53,12 @@ def query():
 
     # Files of images and documents
     files = request.files.getlist("files")
+    filepaths = []
+
+    # Save files to temp storage
+    for file in files:
+        file.save(os.path.join(TEMP_STORAGE_PATH, file.filename))
+        filepaths.append(os.path.join(TEMP_STORAGE_PATH, file.filename))
 
     # Create RAG model if none
     global qa_model
@@ -85,7 +102,13 @@ def query():
 
     # Here should also pass the files too
     answer = qa_model.query(
-        user_message, chat_history, chat_history_truncate_num=4)
+        user_message, chat_history, chat_history_truncate_num=4, attached_file_paths=filepaths)
+
+    # If no error (hopefully), remove temp files, before returning answer
+    for filepath in filepaths:
+        # temp disabled
+        # os.remove(filepath)
+        pass
 
     return jsonify({
         "success": True,

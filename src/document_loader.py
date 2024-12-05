@@ -23,7 +23,7 @@ def load_documents(file_paths, describe_image_callback=None):
             loader = Docx2txtLoader(file_path)
         elif ext == '.txt':
             loader = TextLoader(file_path)
-        elif ext in ['.png', '.jpg', '.jpeg']:
+        elif ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp']:
             if describe_image_callback is not None:
                 description = describe_image_callback(file_path)
                 # Should be true if it works
@@ -41,7 +41,7 @@ def load_documents(file_paths, describe_image_callback=None):
         if is_image:
             # Convert the description into a document format
             doc = Document()
-            doc.text = description["description"] + description["text"]
+            doc.text = description[0] + description[1]
             doc.metadata = {
                 "file_name": os.path.basename(file_path),
                 "file_path": file_path,
