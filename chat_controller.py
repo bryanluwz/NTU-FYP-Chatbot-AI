@@ -59,6 +59,7 @@ def query():
     for file in files:
         file.save(os.path.join(TEMP_STORAGE_PATH, file.filename))
         filepaths.append(os.path.join(TEMP_STORAGE_PATH, file.filename))
+        print("[+] File saved to temp storage:", file.filename)
 
     # Create RAG model if none
     global qa_model
@@ -106,8 +107,8 @@ def query():
 
     # If no error (hopefully), remove temp files, before returning answer
     for filepath in filepaths:
-        # temp disabled
-        # os.remove(filepath)
+        # TODO: temp disabled
+        os.remove(filepath)
         pass
 
     return jsonify({

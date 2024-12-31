@@ -11,5 +11,7 @@ temp_storage
 # Others
 __pycache__
 
+tesseract
+
 server.cert
 server.key

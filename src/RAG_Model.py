@@ -17,13 +17,21 @@ from langchain.text_splitter import CharacterTextSplitter
 from transformers import pipeline
 
 from .document_loader import load_documents
+from .functions import download_tesseract
+
+from PIL import Image
+
+from torch import cuda
 
 import pytesseract
-from PIL import Image
+
+
+tesseract_path = download_tesseract(os.getcwd())
+pytesseract.pytesseract.tesseract_cmd = tesseract_path
 
 
 class RAG_Model:
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, device=None):
         self.embeddings = None
         self.vector_store = None
         self.vector_store_path = None
@@ -35,6 +43,7 @@ class RAG_Model:
         self.document_reranker_pipeline = None
 
         self.debug = debug
+        self.device = device or (1 if cuda.is_available() else 0)
 
     def _debug_print(self, *msg):
         """
@@ -106,8 +115,6 @@ class RAG_Model:
         # TODO: Need to add support for images here that are in the documents
         documents = load_documents(
             file_paths, describe_image_callback=self._describe_image)
-        # documents = load_documents(
-        #     file_paths, describe_image_callback=None)
 
         # Split document into chunks
         text_splitter = CharacterTextSplitter(
@@ -176,26 +183,58 @@ class RAG_Model:
         model_save_path = os.path.join(model_path, model_name)
 
         # Check if the model is already saved
+        # `device` cannot be set to 'auto' for BLIP, so we need to specify the device manually, if GPU cannot be used, fall back to CPU
         if os.path.exists(model_save_path):
-            print(f"🔄 Loading BLIP model from {model_save_path}...")
-            blip_pipeline = pipeline(
-                task=task,
-                model=model_save_path,
-                tokenizer=model_save_path,
-                framework="pt",
-                device_map="auto"
-            )
+            try:
+                print(f"🔄 Loading BLIP model from {model_save_path}...")
+                blip_pipeline = pipeline(
+                    task=task,
+                    model=model_save_path,
+                    tokenizer=model_save_path,
+                    framework="pt",
+                    device=self.device  # Use self.device to specify the device
+                )
+
+            except RuntimeError as e:
+                if "CUDA error: invalid device ordinal" in str(e):
+                    print(
+                        "⚠️ Idk there's some weird GPU device behaviour. Falling back to CPU.")
+                    self.device = -1  # Use CPU
+                    blip_pipeline = pipeline(
+                        task=task,
+                        model=model_save_path,
+                        tokenizer=model_save_path,
+                        framework="pt",
+                        device=self.device  # Use CPU
+                    )
+                else:
+                    raise e
         else:
             # Get the model size before downloading
             print(
                 f"⬇️ Downloading and saving BLIP model '{model_name}' to {model_save_path}...")
-            blip_pipeline = pipeline(
-                task=task,
-                model=model_name,
-                tokenizer=model_name,
-                framework="pt",
-                device_map="auto"
-            )
+            try:
+                blip_pipeline = pipeline(
+                    task=task,
+                    model=model_name,
+                    tokenizer=model_name,
+                    framework="pt",
+                    device=self.device  # Use self.device to specify the device
+                )
+            except RuntimeError as e:
+                if "CUDA error: invalid device ordinal" in str(e):
+                    print(
+                        "⚠️ Idk there's some weird GPU device behaviour. Falling back to CPU.")
+                    self.device = -1  # Use CPU
+                    blip_pipeline = pipeline(
+                        task=task,
+                        model=model_name,
+                        tokenizer=model_name,
+                        framework="pt",
+                        device=self.device  # Use CPU
+                    )
+                else:
+                    raise e
 
             # Save the model
             blip_pipeline.save_pretrained(model_save_path)
@@ -292,19 +331,25 @@ class RAG_Model:
         image = Image.open(image_path)
 
         # Get description
-        image_description = self.blip_pipeline(image)[0]['generated_text']
+        image_description = self.blip_pipeline(image)
+        image_description_text = image_description[0]['generated_text']
 
         # Get OCR text
-        ocr_text = pytesseract.image_to_string(image_path)
+        try:
+            ocr_text = pytesseract.image_to_string(image_path)
+        except Exception as e:
+            print(f"❌ OCR failed (-_-): {e}")
+            ocr_text = ""
 
-        return image_description, ocr_text
+        return {"description": image_description_text, "text": ocr_text}
 
     def _load_input_documents(self, file_paths: list[str]):
         """
         Load the input documents from the given file paths.
         """
         # Load document using PyPDFLoader
-        documents = load_documents(file_paths)
+        documents = load_documents(
+            file_paths, describe_image_callback=self._describe_image)
 
         # Split document into chunks
         text_splitter = CharacterTextSplitter(
@@ -370,7 +415,6 @@ class RAG_Model:
                 context_ranked = context
 
         # Load the attached files (and images)
-        # TODO
         attached_files_docs = self._load_input_documents(attached_file_paths)
 
         # Rank attached files based on usefulness via Cross Encoder
@@ -386,6 +430,7 @@ class RAG_Model:
 
         # Restructure the final prompt passed into LLM
         # TODO: Add attached files and images to the prompt
+        # TODO: Add conversation history to the prompt (if needed, and if so, how much past history?)
         system_prompt = f"""
 You are a friendly teaching assistant at a university.
 Always use the given context to answer questions as accurately as possible.
@@ -394,7 +439,10 @@ Use the minimum amount of sentences needed to provide a correct answer. Do not b
 2. If there's no context available, kindly mention that clarification or additional details are needed. Do not mention the lack of context in the answer.
 3. For questions that don't require specific context (general questions), answer using your general knowledge.
 4. For greetings or casual conversation, respond warmly and engage in a friendly dialogue.
-Context: {context_ranked} {attached_files_ranked}""".replace("\n", " ")
+Context: {context_ranked} 
+User also attached the following files:
+{attached_files_ranked}
+""".replace("\n", " ")
 
         messages = [
             {"role": "system", "content": system_prompt},
