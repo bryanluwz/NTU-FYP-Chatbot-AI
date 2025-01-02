@@ -141,11 +141,13 @@ def load_documents(file_paths, describe_image_callback=None):
                 if is_image:
                     print(
                         f"[?] Image file is under testing for support, weird things might happen: {ext}")
-                    doc = Document(
-                        f'description: {description["description"]}, ocr text: {description["text"]}')
-                    doc.metadata = {
+                    doc = {}
+                    doc["description"] = description["description"]
+                    doc["text"] = description["text"]
+                    doc["metadata"] = {
                         "file_name": os.path.basename(file_path),
                         "file_path": file_path,
+                        "source": "image"
                     }
                     documents.append(doc)
                 else:

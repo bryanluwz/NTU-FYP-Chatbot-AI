@@ -17,17 +17,12 @@ from langchain.text_splitter import CharacterTextSplitter
 from transformers import pipeline
 
 from .document_loader import load_documents
-from .functions import download_tesseract
 
 from PIL import Image
 
 from torch import cuda
 
 import pytesseract
-
-
-tesseract_path = download_tesseract(os.getcwd())
-pytesseract.pytesseract.tesseract_cmd = tesseract_path
 
 
 class RAG_Model:
@@ -357,7 +352,12 @@ class RAG_Model:
             chunk_overlap=30,
             separator="\n"
         )
-        docs = text_splitter.split_documents(documents)
+
+        files = text_splitter.split_documents(
+            [doc for doc in documents if "metadata" not in doc and doc.metadata.get("source") != "image"])
+        images = [
+            doc for doc in documents if "metadata" in doc and doc["metadata"]["source"] == "image"]
+        docs = files + images
 
         return docs
 
@@ -398,7 +398,6 @@ class RAG_Model:
         self._debug_print(f"Reformulated query: {reformulated_query}")
 
         # TODO: Just check if the reformulated query needs context or not
-
         # Get Context based on reformulated query
         context: List[Document] = self.vector_store.similarity_search(
             reformulated_query["content"], k=search_k)
@@ -417,14 +416,19 @@ class RAG_Model:
         # Load the attached files (and images)
         attached_files_docs = self._load_input_documents(attached_file_paths)
 
-        # Rank attached files based on usefulness via Cross Encoder
+        # Rank attached files based on usefulness via Cross Encoder, except for images (metadata.source == "image")
+        attached_images = [
+            doc for doc in attached_files_docs if "metadata" in doc and doc["metadata"]["source"] == "image"]
+        attached_files_docs_without_images = [
+            doc for doc in attached_files_docs if "metadata" not in doc and doc.metadata.get("source") != "image"]
+
         try:
             attached_files_ranked = self._rerank_documents(
-                attached_files_docs, reformulated_query["content"], top_k=top_k)
+                attached_files_docs_without_images, reformulated_query["content"], top_k=top_k)
         except:
             try:
                 attached_files_ranked = self._rerank_documents(
-                    attached_files_docs, query, top_k=top_k)
+                    attached_files_docs_without_images, query, top_k=top_k)
             except:
                 attached_files_ranked = attached_files_docs
 
@@ -440,8 +444,8 @@ Use the minimum amount of sentences needed to provide a correct answer. Do not b
 3. For questions that don't require specific context (general questions), answer using your general knowledge.
 4. For greetings or casual conversation, respond warmly and engage in a friendly dialogue.
 Context: {context_ranked} 
-User also attached the following files:
-{attached_files_ranked}
+{ f'Refer to the following user files: {attached_files_ranked}' if len(attached_files_ranked) > 0 else ''}
+{f'Refer to the following user images: {[{"description": image["description"], "text": image["text"]} for image in attached_images]}' if len(attached_images) > 0 else ''}
 """.replace("\n", " ")
 
         messages = [
