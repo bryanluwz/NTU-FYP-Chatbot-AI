@@ -17,9 +17,11 @@ if torch.cuda.is_available():
 # Config
 config = dotenv_values(".env")
 
-MODEL_NAME = 'meta-llama/Llama-3.2-1B-Instruct'
+LLM_MODEL_NAME = 'meta-llama/Llama-3.2-1B-Instruct'
+BLIP_MODEL_NAME = 'Salesforce/blip-image-captioning-base'
 CROSS_ENCODER_NAME = 'cross-encoder/ms-marco-MiniLM-L-6-v2'
-TASK = 'text-generation'
+LLM_TASK = 'text-generation'
+BLIP_TASK = 'image-to-text'
 
 EMBEDDING_NAME = 'sentence-transformers/paraphrase-MiniLM-L6-v2'
 
@@ -34,6 +36,10 @@ os.makedirs(VECTOR_STORE_PATH, exist_ok=True)
 LLM_MODEL_PATH = os.path.abspath(
     config.get('LLM_MODEL_PATH', './models/model'))
 os.makedirs(LLM_MODEL_PATH, exist_ok=True)
+
+BLIP_MODEL_PATH = os.path.abspath(
+    config.get('BLIP_MODEL_PATH', './models/blip_model'))
+os.makedirs(BLIP_MODEL_PATH, exist_ok=True)
 
 CROSS_ENCODER_MODEL_PATH = os.path.abspath(
     config.get('CROSS_ENCODER_MODEL_PATH', './models/cross_encoder'))
@@ -56,7 +62,8 @@ def create_rag_model(debug=False):
     qa_model.load_embeddings_model(EMBEDDING_NAME, EMBEDDING_MODEL_PATH)
     qa_model.initialize_cross_encoder(
         model_name=CROSS_ENCODER_NAME, model_path=CROSS_ENCODER_MODEL_PATH)
-    qa_model.initialize_llm(model_name=MODEL_NAME,
-                            max_new_tokens=512, model_path=LLM_MODEL_PATH, temperature=0.5, task=TASK)
-    # TODO: add initialize clip thingy here
+    qa_model.initialize_llm(model_name=LLM_MODEL_NAME,
+                            max_new_tokens=512, model_path=LLM_MODEL_PATH, temperature=0.5, task=LLM_TASK)
+    qa_model.initialize_blip(model_name=BLIP_MODEL_NAME,
+                             model_path=BLIP_MODEL_PATH, task=BLIP_TASK)
     return qa_model
