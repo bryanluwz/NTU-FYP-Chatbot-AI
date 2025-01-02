@@ -433,7 +433,6 @@ class RAG_Model:
                 attached_files_ranked = attached_files_docs
 
         # Restructure the final prompt passed into LLM
-        # TODO: Add attached files and images to the prompt
         # TODO: Add conversation history to the prompt (if needed, and if so, how much past history?)
         system_prompt = f"""
 You are a friendly teaching assistant at a university.

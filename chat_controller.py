@@ -107,7 +107,6 @@ def query():
 
     # If no error (hopefully), remove temp files, before returning answer
     for filepath in filepaths:
-        # TODO: temp disabled
         os.remove(filepath)
         pass
 

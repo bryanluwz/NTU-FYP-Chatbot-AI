@@ -101,7 +101,6 @@ FILE_TYPES = {
 }
 
 
-# TODO: Is there a better way to do file extension checking?
 def load_documents(file_paths, describe_image_callback=None):
     """Load multiple documents from various formats into a single list of documents with metadata."""
     documents = []
