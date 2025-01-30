@@ -2,7 +2,8 @@
 This file contains all the RAG model stuffs
 """
 
-from src.RAG_Model import RAG_Model
+# from src.RAG_Model import RAG_Model
+from src.RAG_Model_Modular import RAG_Model_Modular
 
 import os
 from dotenv import dotenv_values
@@ -58,7 +59,7 @@ os.makedirs(DOCUMENT_PARENT_DIR_PATH, exist_ok=True)
 
 
 def create_rag_model(debug=False):
-    qa_model = RAG_Model(debug=debug)
+    qa_model = RAG_Model_Modular(debug=debug)
     qa_model.load_embeddings_model(EMBEDDING_NAME, EMBEDDING_MODEL_PATH)
     qa_model.initialize_cross_encoder(
         model_name=CROSS_ENCODER_NAME, model_path=CROSS_ENCODER_MODEL_PATH)
