@@ -1,4 +1,5 @@
-from flask import request, jsonify, json, send_file
+import time
+from flask import after_this_request, request, jsonify, json, send_file
 from src.functions import list_all_files
 import shutil
 
@@ -205,5 +206,14 @@ def tts():
 
     # TTS
     file_path = tts_model.tts(voice, TTS_MODEL_PATH, text)
+
+    @after_this_request
+    def remove_file(response):
+        try:
+            # TODO: Remove file, currently not working cause file is still in use for some reason
+            os.remove(file_path)
+        except Exception as e:
+            print(f"Error removing file: {e}")
+        return response
 
     return send_file(file_path, as_attachment=True)
