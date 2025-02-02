@@ -1,11 +1,11 @@
-from flask import request, jsonify, json
+from flask import request, jsonify, json, send_file
 from src.functions import list_all_files
 import shutil
 
 import os
 import zipfile
 
-from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME, VECTOR_STORE_PATH
+from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME, VECTOR_STORE_PATH, create_tts_model
 
 from dotenv import dotenv_values
 config = dotenv_values(".env")
@@ -17,6 +17,10 @@ Initialise some stuff
 TEMP_STORAGE_PATH = os.path.abspath(
     config.get('TEMP_STORAGE_PATH', './temp_storage'))
 os.makedirs(TEMP_STORAGE_PATH, exist_ok=True)
+
+TTS_MODEL_PATH = os.path.abspath(
+    config.get('TTS_MODEL_PATH', './models/tts_model'))
+os.makedirs(TTS_MODEL_PATH, exist_ok=True)
 
 
 """
@@ -41,6 +45,9 @@ Controlller functions
 
 global qa_model
 qa_model = None
+
+global tts_model
+tts_model = None
 
 
 def query():
@@ -182,3 +189,21 @@ def transferDocumentSrc():
         "success": False,
         'data': {
             'response': 'Document upload failed'}})
+
+
+def tts():
+    # Get info
+    text = request.form.get("text")
+    voice = request.form.get("ttsName") or 'default'
+
+    # Create TTS model if none
+    global tts_model
+
+    if tts_model is None:
+        print("[!] Creating TTS model beep beep boop...")
+        tts_model = create_tts_model(debug=True)
+
+    # TTS
+    file_path = tts_model.tts(voice, TTS_MODEL_PATH, text)
+
+    return send_file(file_path, as_attachment=True)

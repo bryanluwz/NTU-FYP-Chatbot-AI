@@ -3,6 +3,7 @@ This file contains all the RAG model stuffs
 """
 
 from src.RAG_Model import RAG_Model
+from src.TTS_Model import TTS_Model
 
 import os
 from dotenv import dotenv_values
@@ -67,3 +68,8 @@ def create_rag_model(debug=False):
     qa_model.initialize_blip(model_name=BLIP_MODEL_NAME,
                              model_path=BLIP_MODEL_PATH, task=BLIP_TASK)
     return qa_model
+
+
+def create_tts_model(debug=False):
+    tts_model = TTS_Model(debug=debug)
+    return tts_model
