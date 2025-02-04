@@ -1,16 +1,17 @@
 """
-Handles TTS and STT
+Handles TTS 
 """
 
 import uuid
 from dotenv import dotenv_values
-from datetime import datetime
 import os
 from torch.cuda import is_available as is_cuda_available
 from transformers import pipeline
 from kokoro import KPipeline
 import soundfile as sf
 import numpy as np
+
+from src.Base_AI_Model import BaseModel
 
 config = dotenv_values(".env")
 
@@ -35,21 +36,13 @@ class TTS_Model_Map:
         return TTS_Model_Map.model_map.get(name, TTS_Model_Map.model_map["default"])
 
 
-class TTS_Model:
+class TTS_Model(BaseModel):
     def __init__(self, debug=False):
+        super().__init__(debug)
         self.tts_pipelines = {}
         self.active_tts_pipeline = None
 
-        self.debug = debug
         self.device = 'cuda' if is_cuda_available() else 'cpu'
-
-    def _debug_print(self, *msg):
-        """
-        Print debug messages
-        """
-        if self.debug:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[{timestamp}]", *msg, end="\n\n")
 
     def initialise_tts(self, model_name: str, model_path: str = None, task: str = 'text-to-speech'):
         """

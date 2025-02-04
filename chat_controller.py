@@ -217,3 +217,7 @@ def tts():
         return response
 
     return send_file(file_path, as_attachment=True)
+
+
+def sst():
+    return
