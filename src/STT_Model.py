@@ -5,8 +5,10 @@ Handles STT
 from Base_AI_Model import BaseModel
 from dotenv import dotenv_values
 import os
-import soundfile as sf
+from pydub import AudioSegment
+import numpy as np
 import librosa
+import io
 
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 
@@ -49,12 +51,11 @@ class STT_Model(BaseModel):
         Perform speech-to-text on the given audio
         """
 
+        assert self.stt_pipeline is not None, "STT model not initialised"
+
         self._debug_print("🔄 Performing STT...")
 
-        audio_array, sampling_rate = self._convert_blob_to_array(audio)
-
-        if self.stt_pipeline is None or self.stt_processor is None:
-            self
+        audio_array, _ = self._convert_bytes_to_array(audio)
 
         input_features = self.stt_processor(audio_array, sampling_rate=self.model_sample_rate,
                                             return_tensors="pt").input_features
@@ -68,14 +69,26 @@ class STT_Model(BaseModel):
         # Return the first (and only) transcription
         return transcription
 
-    def _convert_blob_to_array(self, blob):
-        audio_array, sampling_rate = sf.read(blob)
+    def _convert_bytes_to_array(self, bytes):
+        """
+        Convert audio blob to numpy array
+        """
+        audio_file = io.BytesIO(bytes)
+        audio = AudioSegment.from_file(
+            audio_file, format='webm')  # Format is webm
+
+        samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
+        sampling_rate = audio.frame_rate  # Get sample rate
+
         if sampling_rate != self.model_sample_rate:
-            audio_array = self._convert_audio_sampling_rate(
-                audio_array, sampling_rate)
-        return audio_array, sampling_rate
+            samples = self._convert_audio_sampling_rate(samples, sampling_rate)
+
+        return samples, sampling_rate
 
     def _convert_audio_sampling_rate(self, audio_array, sampling_rate):
+        """
+        Convert the audio sampling rate to the model's sampling rate
+        """
         if sampling_rate != self.model_sample_rate:
             self._debug_print(
                 f"🔄 Converting audio sampling rate from {sampling_rate} to {self.model_sample_rate}..."
@@ -99,5 +112,11 @@ if __name__ == '__main__':
     stt = STT_Model(debug=True)
     stt.initialise_stt(STT_MODEL_NAME, STT_MODEL_PATH)
 
-    audio_file_path = r'C:\Users\bryan\Documents\GitHub\NTU-FYP-Chatbot-AI\temp_storage\default_tts_output_1cb9029f-167a-4048-99b5-84d1502099d5.wav'
-    transcription = stt.stt(audio_file_path)
+    audio_file_path = r'C:\Users\bryan\Documents\GitHub\NTU-FYP-Chatbot-AI\temp.webm'
+
+    # Convert audio to bytes
+    audio = open(audio_file_path, 'rb').read()
+
+    # print("audio", audio)
+
+    transcription = stt.stt(audio)

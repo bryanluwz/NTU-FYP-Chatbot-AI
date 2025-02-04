@@ -3,6 +3,7 @@ This file contains all the RAG model stuffs
 """
 
 from src.RAG_Model import RAG_Model
+from src.STT_Model import STT_Model
 from src.TTS_Model import TTS_Model
 
 import os
@@ -73,3 +74,16 @@ def create_rag_model(debug=False):
 def create_tts_model(debug=False):
     tts_model = TTS_Model(debug=debug)
     return tts_model
+
+
+STT_MODEL_PATH = os.path.abspath(
+    config.get('STT_MODEL_PATH', './models/stt_model'))
+os.makedirs(STT_MODEL_PATH, exist_ok=True)
+
+STT_MODEL_NAME = 'openai/whisper-base.en'
+
+
+def create_stt_model(debug=False):
+    stt_model = STT_Model(debug=debug)
+    stt_model.initialise_stt(STT_MODEL_NAME, STT_MODEL_PATH)
+    return stt_model

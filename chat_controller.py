@@ -1,4 +1,3 @@
-import time
 from flask import after_this_request, request, jsonify, json, send_file
 from src.functions import list_all_files
 import shutil
@@ -6,7 +5,7 @@ import shutil
 import os
 import zipfile
 
-from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME, VECTOR_STORE_PATH, create_tts_model
+from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME, VECTOR_STORE_PATH, create_stt_model, create_tts_model
 
 from dotenv import dotenv_values
 config = dotenv_values(".env")
@@ -49,6 +48,9 @@ qa_model = None
 
 global tts_model
 tts_model = None
+
+global stt_model
+stt_model = None
 
 
 def query():
@@ -219,5 +221,28 @@ def tts():
     return send_file(file_path, as_attachment=True)
 
 
-def sst():
-    return
+def stt():
+    # Get info
+    audio = request.files.get("audio")
+    if audio is None:
+        return jsonify({
+            "success": False,
+            "data": {
+                'response': 'No audio file'}})
+
+    audio = audio.stream.read()
+
+    # Create TTS model if none
+    global stt_model
+
+    if stt_model is None:
+        print("[!] Creating STT model beep beep boop...")
+        stt_model = create_stt_model(debug=True)
+
+    # SST
+    text = stt_model.stt(audio)
+
+    return jsonify({
+        "success": True,
+        "data": {
+            'response': text}})
