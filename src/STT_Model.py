@@ -8,10 +8,8 @@ import os
 from pydub import AudioSegment
 import numpy as np
 import librosa
-import soundfile as sf
 import io
 from torch import ones_like as torch_ones_like
-from scipy.io.wavfile import write
 
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 
@@ -80,7 +78,8 @@ class STT_Model(BaseModel):
         Convert audio bytes to a numpy array of float32 samples and ensure the correct sampling rate.
         """
         # Load audio using pydub.AudioSegment
-        audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes))
+        audio_segment = AudioSegment.from_file(
+            io.BytesIO(audio_bytes), format="webm")
         audio_segment = audio_segment.set_channels(1)
 
         sampling_rate = audio_segment.frame_rate

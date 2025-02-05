@@ -40,9 +40,8 @@ def get_document_dir_path(document_parent_dir_path=DOCUMENT_PARENT_DIR_PATH, doc
 
 
 """
-Controlller functions
+Global variables
 """
-
 global qa_model
 qa_model = None
 
@@ -51,6 +50,18 @@ tts_model = None
 
 global stt_model
 stt_model = None
+
+if tts_model is None:
+    print("[!] Creating TTS model beep beep boop...")
+    tts_model = create_tts_model(debug=True)
+
+if stt_model is None:
+    print("[!] Creating STT model beep beep boop...")
+    stt_model = create_stt_model(debug=True)
+
+"""
+Controlller functions
+"""
 
 
 def query():
@@ -202,10 +213,6 @@ def tts():
     # Create TTS model if none
     global tts_model
 
-    if tts_model is None:
-        print("[!] Creating TTS model beep beep boop...")
-        tts_model = create_tts_model(debug=True)
-
     # TTS
     file_path = tts_model.tts(voice, TTS_MODEL_PATH, text)
 
@@ -234,10 +241,6 @@ def stt():
 
     # Create STT model if none
     global stt_model
-
-    if stt_model is None:
-        print("[!] Creating STT model beep beep boop...")
-        stt_model = create_stt_model(debug=True)
 
     # STT
     text = stt_model.stt(audio)
