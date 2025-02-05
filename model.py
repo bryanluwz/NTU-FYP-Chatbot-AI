@@ -80,7 +80,7 @@ STT_MODEL_PATH = os.path.abspath(
     config.get('STT_MODEL_PATH', './models/stt_model'))
 os.makedirs(STT_MODEL_PATH, exist_ok=True)
 
-STT_MODEL_NAME = 'openai/whisper-base.en'
+STT_MODEL_NAME = 'openai/whisper-small.en'
 
 
 def create_stt_model(debug=False):
