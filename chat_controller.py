@@ -232,14 +232,14 @@ def stt():
 
     audio = audio.stream.read()
 
-    # Create TTS model if none
+    # Create STT model if none
     global stt_model
 
     if stt_model is None:
         print("[!] Creating STT model beep beep boop...")
         stt_model = create_stt_model(debug=True)
 
-    # SST
+    # STT
     text = stt_model.stt(audio)
 
     return jsonify({

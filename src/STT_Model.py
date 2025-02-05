@@ -2,13 +2,16 @@
 Handles STT
 """
 
-from Base_AI_Model import BaseModel
+from src.Base_AI_Model import BaseModel
 from dotenv import dotenv_values
 import os
 from pydub import AudioSegment
 import numpy as np
 import librosa
+import soundfile as sf
 import io
+from torch import ones_like as torch_ones_like
+from scipy.io.wavfile import write
 
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 
@@ -22,7 +25,7 @@ class STT_Model(BaseModel):
 
         self.stt_pipeline = None
         self.stt_processor = None
-        self.model_sample_rate = model_sample_rate
+        self.model_sampling_rate = model_sample_rate
 
     def initialise_stt(self, model_name: str, model_path: str = None):
         """
@@ -57,47 +60,45 @@ class STT_Model(BaseModel):
 
         audio_array, _ = self._convert_bytes_to_array(audio)
 
-        input_features = self.stt_processor(audio_array, sampling_rate=self.model_sample_rate,
+        input_features = self.stt_processor(audio_array, sampling_rate=self.model_sampling_rate,
                                             return_tensors="pt").input_features
 
-        predicted_ids = self.stt_pipeline.generate(input_features)
+        predicted_ids = self.stt_pipeline.generate(
+            input_features, attention_mask=torch_ones_like(input_features), pad_token_id=self.stt_processor.tokenizer.eos_token_id)
+        # predicted_ids = self.stt_pipeline.generate(input_features)
 
         transcription = self.stt_processor.batch_decode(
             predicted_ids, skip_special_tokens=True)[0]
 
         self._debug_print(f"🔄 Transcription: {transcription}")
+
         # Return the first (and only) transcription
         return transcription
 
-    def _convert_bytes_to_array(self, bytes):
+    def _convert_bytes_to_array(self, audio_bytes):
         """
-        Convert audio blob to numpy array
+        Convert audio bytes to a numpy array of float32 samples and ensure the correct sampling rate.
         """
-        audio_file = io.BytesIO(bytes)
-        audio = AudioSegment.from_file(
-            audio_file, format='webm')  # Format is webm
+        # Load audio using pydub.AudioSegment
+        audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes))
+        audio_segment = audio_segment.set_channels(1)
 
-        samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
-        sampling_rate = audio.frame_rate  # Get sample rate
+        sampling_rate = audio_segment.frame_rate
+        samples = audio_segment.get_array_of_samples()
 
-        if sampling_rate != self.model_sample_rate:
-            samples = self._convert_audio_sampling_rate(samples, sampling_rate)
+        samples = np.array(samples).T.astype(np.float32)
+        samples /= np.iinfo(np.int32).max  # Bruh is int32 not int16
+
+        # Resample if necessary
+        if sampling_rate != self.model_sampling_rate:
+            self._debug_print(
+                f"🔄 Resampling from {sampling_rate} Hz to {self.model_sampling_rate} Hz ..."
+            )
+            samples = librosa.resample(
+                samples, orig_sr=sampling_rate, target_sr=self.model_sampling_rate)
+            sampling_rate = self.model_sampling_rate
 
         return samples, sampling_rate
-
-    def _convert_audio_sampling_rate(self, audio_array, sampling_rate):
-        """
-        Convert the audio sampling rate to the model's sampling rate
-        """
-        if sampling_rate != self.model_sample_rate:
-            self._debug_print(
-                f"🔄 Converting audio sampling rate from {sampling_rate} to {self.model_sample_rate}..."
-            )
-
-            audio_array = librosa.core.resample(
-                y=audio_array, orig_sr=sampling_rate, target_sr=self.model_sample_rate)
-
-        return audio_array
 
 
 if __name__ == '__main__':
@@ -116,7 +117,5 @@ if __name__ == '__main__':
 
     # Convert audio to bytes
     audio = open(audio_file_path, 'rb').read()
-
-    # print("audio", audio)
 
     transcription = stt.stt(audio)
