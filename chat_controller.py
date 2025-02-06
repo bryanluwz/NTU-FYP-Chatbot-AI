@@ -1,11 +1,11 @@
-from flask import request, jsonify, json
+from flask import after_this_request, request, jsonify, json, send_file
 from src.functions import list_all_files
 import shutil
 
 import os
 import zipfile
 
-from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME, VECTOR_STORE_PATH
+from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME, VECTOR_STORE_PATH, create_stt_model, create_tts_model
 
 from dotenv import dotenv_values
 config = dotenv_values(".env")
@@ -17,6 +17,10 @@ Initialise some stuff
 TEMP_STORAGE_PATH = os.path.abspath(
     config.get('TEMP_STORAGE_PATH', './temp_storage'))
 os.makedirs(TEMP_STORAGE_PATH, exist_ok=True)
+
+TTS_MODEL_PATH = os.path.abspath(
+    config.get('TTS_MODEL_PATH', './models/tts_model'))
+os.makedirs(TTS_MODEL_PATH, exist_ok=True)
 
 
 """
@@ -36,11 +40,28 @@ def get_document_dir_path(document_parent_dir_path=DOCUMENT_PARENT_DIR_PATH, doc
 
 
 """
-Controlller functions
+Global variables
 """
-
 global qa_model
 qa_model = None
+
+global tts_model
+tts_model = None
+
+global stt_model
+stt_model = None
+
+if tts_model is None:
+    print("[!] Creating TTS model beep beep boop...")
+    tts_model = create_tts_model(debug=True)
+
+if stt_model is None:
+    print("[!] Creating STT model beep beep boop...")
+    stt_model = create_stt_model(debug=True)
+
+"""
+Controlller functions
+"""
 
 
 def query():
@@ -182,3 +203,49 @@ def transferDocumentSrc():
         "success": False,
         'data': {
             'response': 'Document upload failed'}})
+
+
+def tts():
+    # Get info
+    text = request.form.get("text")
+    voice = request.form.get("ttsName") or 'default'
+
+    # Create TTS model if none
+    global tts_model
+
+    # TTS
+    file_path = tts_model.tts(voice, TTS_MODEL_PATH, text)
+
+    @after_this_request
+    def remove_file(response):
+        try:
+            # TODO: Remove file, currently not working cause file is still in use for some reason
+            os.remove(file_path)
+        except Exception as e:
+            print(f"Error removing file: {e}")
+        return response
+
+    return send_file(file_path, as_attachment=True)
+
+
+def stt():
+    # Get info
+    audio = request.files.get("audio")
+    if audio is None:
+        return jsonify({
+            "success": False,
+            "data": {
+                'response': 'No audio file'}})
+
+    audio = audio.stream.read()
+
+    # Create STT model if none
+    global stt_model
+
+    # STT
+    text = stt_model.stt(audio)
+
+    return jsonify({
+        "success": True,
+        "data": {
+            'response': text}})

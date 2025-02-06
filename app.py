@@ -1,7 +1,7 @@
 from flask import Flask
 from flask_cors import CORS
 from chat_routes import chat_bp
-
+from waitress import serve
 
 # App stuff
 app = Flask(__name__)
@@ -17,5 +17,7 @@ def home():
 
 if __name__ == '__main__':
     # Run the Flask app on port 5000
+    # serve(app, host='0.0.0.0', port=5000, url_scheme='https')
+
     app.run(host='0.0.0.0', port=5000, ssl_context=(
         'server.cert', 'server.key'))
