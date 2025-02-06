@@ -63,7 +63,6 @@ class STT_Model(BaseModel):
 
         predicted_ids = self.stt_pipeline.generate(
             input_features, attention_mask=torch_ones_like(input_features), pad_token_id=self.stt_processor.tokenizer.eos_token_id)
-        # predicted_ids = self.stt_pipeline.generate(input_features)
 
         transcription = self.stt_processor.batch_decode(
             predicted_ids, skip_special_tokens=True)[0]

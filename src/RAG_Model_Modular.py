@@ -18,53 +18,12 @@ from PIL import Image
 from torch import cuda
 import pytesseract
 import json
-from pydantic import BaseModel, Field
-from langchain_core.output_parsers import PydanticOutputParser
-from src.Base_AI_Model import BaseModel as BaseAIModel
-
-
-class SubinputClass(BaseModel):
-    subinput: str = Field(description="The subinput to be processed")
-    retrieval_needed: bool = Field(
-        description="Whether retrieval is needed based on the input and context")
-
-
-class SubinputListClass(BaseModel):
-    subinputs: List[SubinputClass] = Field(
-        description="List of subinputs to be processed")
-
-
-def find_first_json_array(text, required_keys=[]):
-    # Regex to find JSON arrays
-    json_candidates = re.findall(r'\[.*?\]', text, re.DOTALL)
-
-    for candidate in json_candidates:
-        print(candidate)
-        try:
-            parsed = json.loads(candidate)
-            if isinstance(parsed, list) and all(isinstance(obj, dict) and all(k in obj for k in required_keys) for obj in parsed):
-                return parsed  # Return the first valid match
-        except json.JSONDecodeError:
-            continue
-
-    # If no valid JSON array is found, search for JSON objects
-    json_candidates = re.findall(r'\{.*?\}', text, re.DOTALL)
-    for candidate in json_candidates:
-        print(candidate)
-        try:
-            parsed = json.loads(candidate)
-            if isinstance(parsed, dict) and all(k in parsed for k in required_keys):
-                return [parsed]  # Return the first valid match
-        except json.JSONDecodeError:
-            continue
-
-    return None
+from src.Base_AI_Model import BaseModel
 
 
 class RAG_Model_Modular(BaseModel):
     def __init__(self, debug=False, device=None):
-        super().__init__()
-        # Models
+        super().__init__(debug=debug)
         self.embeddings = None
         self.vector_store = None
         self.vector_store_path = None
@@ -76,8 +35,6 @@ class RAG_Model_Modular(BaseModel):
 
         self.debug = debug
         self.device = device or (1 if cuda.is_available() else 0)
-        self.preretrieval_parser = PydanticOutputParser(
-            pydantic_object=SubinputListClass)
 
     def _convert_chat_history_to_string(self, messages: dict[str, str]):
         """
@@ -166,7 +123,7 @@ class RAG_Model_Modular(BaseModel):
         self.vector_store_path = vector_store_path
         self.vector_store = vectorstore
 
-    def initialize_llm(self, model_name: str = 'distilgpt2', max_new_tokens: int = 1024, temperature: float = 0.7, model_path: str = None, task: str = "text-generation"):
+    def initialize_llm(self, model_name: str = 'distilgpt2', max_new_tokens: int = 1024, temperature: float = 0.6, model_path: str = None, task: str = "text-generation"):
         """
         Initialize the pipeline for text generation, and save/load the model.
         """
@@ -353,7 +310,7 @@ class RAG_Model_Modular(BaseModel):
         assert self.llm_pipeline is not None, "LLM pipeline not initialized."
         assert self.document_reranker_pipeline is not None, "Cross-encoder model not initialized."
 
-        self._debug_print("[!] Pre-retrieval - Query formatting...")
+        self._debug_print("[!] Pre-retrieval - Query reformulating...")
 
         self._debug_print(
             "[!] Pre-retrieval - Loading attached files and chat history...")
@@ -378,111 +335,40 @@ class RAG_Model_Modular(BaseModel):
         ]
 
         self._debug_print(
-            f"[!] Pre-retrieval - Querying LLM for input decomposition: {query}"
+            f"[!] Pre-retrieval - Querying LLM for input reformulation: {query}"
         )
 
         # TODO: cant  output json ffs
         system_prompt = (
-            "You are an input decomposition expert at converting user questions into smaller inputs. "
+            "You are a chatbot input reformulating expert at summarising conversation histories, attached documents, and user inputs. "
             "You have access to a collection of course materials for a university course. "
-            "You have access to the chat history and any attached files and images, but these may not be relevant"
+            "You have access to the chat history and any attached files and images, but these may not be relevant. "
             ""
-            "Perform input decomposition. Break down the user input into smaller, more manageable subinputs, when necessary. "
-            "Only output between 1 to 3 subinputs. "
-            "If you think the input is clear and does not need decomposition, return the input as it is as a single subinput."
+            "Your task is to perform input reformulation by rephrasing the user question based on the provided information. "
+            "You should provide a concise and clear rephrased question, accompanied by contexts if necessary. "
             ""
             "Do NOT add new information, make assumptions, or create your own questions. "
             "If rephrasing is not possible without assumptions, return the question exactly as it is."
             "Do NOT answer the question. Just rephrase it."
             "Do NOT change the meaning or context of the question."
             ""
-            f"{self.preretrieval_parser.get_format_instructions()}"
         )
-        # system_prompt = (
-        #     "You are an input decomposition expert at converting user questions into smaller inputs. "
-        #     "You have access to a collection of course materials for a university course. "
-        #     "You have access to the chat history and any attached files and images, but these may not be relevant"
-        #     ""
-        #     "Perform input decomposition. Break down the user input into smaller, more manageable subinputs, when necessary. "
-        #     "Only output between 1 to 3 subinputs. "
-        #     "If you think the input is clear and does not need decomposition, return the input as it is as a single subinput."
-        #     ""
-        #     "Do NOT add new information, make assumptions, or create your own questions. "
-        #     "If rephrasing is not possible without assumptions, return the question exactly as it is."
-        #     "Do NOT answer the question. Just rephrase it."
-        #     "Do NOT change the meaning or context of the question."
-        #     ""
-        #     "IMPORTANT: Your output MUST ONLY be a JSON array of valid dictionary object with exactly two keys:"
-        #     '"subinput": A string subinput.'
-        #     '"retrieval_needed": A true or false boolean indicating whether retrieval is needed based on the input and context. only set it to true when necessary.'
-        # )
 
-        reformulated_query = [
+        final_prompt = [
             {"role": "system", "content": system_prompt}] + formatted_query + [{
                 "role": "user",
                 "content": query
             }]
 
-        response = self.llm_pipeline(reformulated_query)[
+        reformulated_user_query = self.llm_pipeline(final_prompt)[
             0]['generated_text'][-1]['content']
 
         self._debug_print(
-            f"[!] Pre-retrieval - Response from LLM: \n{response}")
+            f"[!] Pre-retrieval - Response from LLM: \n{reformulated_user_query}")
 
-        try:
-            parsed_json = find_first_json_array(
-                response, ["subinput", "retrieval_needed"])
+        return reformulated_user_query
 
-            self._debug_print(
-                f"[!] Pre-retrieval - Parsed JSON: \n{parsed_json}")
-
-            if parsed_json is None:
-                raise ValueError("Response is not a list")
-
-            # Check if is array / list
-            if not isinstance(parsed_json, list):
-                raise ValueError("Response is not a list")
-
-            # Check if each element is a dictionary that contains the keys "subinput" and "retrieval_needed"
-            for subquery_object in parsed_json:
-                if not ("subinput" in subquery_object and "retrieval_needed" in subquery_object):
-                    raise ValueError(
-                        "Subquery object does not contain the required keys")
-
-                if not isinstance(subquery_object["subinput"], str):
-                    raise ValueError("subinput is not a string")
-
-                if not isinstance(subquery_object["retrieval_needed"], bool):
-                    # Try to convert to boolean, if cannot then set to false
-
-                    try:
-                        subquery_object["retrieval_needed"] = bool(
-                            subquery_object["retrieval_needed"])
-                    except ValueError:
-                        subquery_object["retrieval_needed"] = False
-
-            subqueries_dict = []
-            for subquery_object in parsed_json:
-                subinput = subquery_object["subinput"].strip()
-                retrieval_needed = subquery_object["retrieval_needed"]
-                subqueries_dict.append(
-                    {"subquery": subinput, "retrieval_needed": retrieval_needed})
-
-        except Exception as e:
-            self._debug_print(
-                f'[!] Pre-retrieval - Error parsing response: {e}'
-            )
-            self._debug_print(
-                '[!] Pre-retrieval - Error parsing response, returning default subqueries')
-            subqueries_dict = [
-                {"subquery": response, "retrieval_needed": False}]
-
-        self._debug_print(
-            f"[!] Pre-retrieval - Reformulated Subqueries: \n{subqueries_dict}")
-
-        return subqueries_dict
-
-    def _retrieval(self, subqueries: list[dict]):
+    def _retrieval(self, query: str):
         """
         Retrieval and post-retrieval processing.
         """
@@ -493,91 +379,39 @@ class RAG_Model_Modular(BaseModel):
         self._debug_print(
             "[!] Retrieval - Searching, filtering and ranking for relevant documents...")
 
-        # Sparse and dense retrieval
-        for subquery_object in subqueries:
-            if not ("subquery" in subquery_object and "retrieval_needed" in subquery_object):
-                continue
+        # Sparse and dense retrieval??
+        context = self.vector_store.similarity_search(query, k=14)
+        filtered_context = self._filter_rerank_with_llm(context, query)
 
-            subquery = subquery_object["subquery"]
-            retrieval_needed = subquery_object["retrieval_needed"]
+        return filtered_context
 
-            # Retrieve relevant documents based on the subquery
-            if retrieval_needed:
-                context = self.vector_store.similarity_search(
-                    subquery, k=4)  # Retrieve top-k
-                filtered_context = self._filter_rerank_with_llm(
-                    context, subquery)
-                subquery_object["context"] = filtered_context
-
-        self._debug_print(
-            "[!] Retrieval - Reranking and filtering complete. Subqueries: \n", subqueries)
-
-        return subqueries
-
-    def _filter_rerank_with_llm(self, context: list[Document], subquery: str):
+    def _filter_rerank_with_llm(self, context: list[Document], query: str, threshold=0.5):
         """
         Use the LLM to judge the relevance of each document in the context and rerank them.
         """
+        assert self.document_reranker_pipeline is not None, "Cross-encoder model not initialized."
+
         if not context:
             return []
 
         self._debug_print(
-            f"[!] Filter and Rerank - Filtering and reranking {len(context)} documents...")
+            f"[!] Filter and Rerank - Filtering and reranking {len(context)} document(s)...")
 
-        # Prepare prompt for LLM to evaluate documents
-        # TODO: Fix this shit that cant evaluate for shit
-        system_prompt = (
-            "You are given a subinput and a list of university courses documents. For each document, decide if it is relevant to the subinput."
-            "Each document has an index number."
-            "Return a JSON object containing the document and a relevance score (0.0 to 0.99). "
-            "If it is not relevant, then return 0"
-            "List the documents in a JSON array of which contains a dictionary object with the following"
-            "keys: 'document': the index number, and 'relevance_score': the score."
-            "Only return a JSON array, do NOT return anything else"
-            "Do NOT add any other words, headings, explanations, just return the array"
-        )
+        # Rerank the list of documents based on relevance to the query
+        query_doc_pairs = [
+            {"text": query, "text_pair": doc.page_content} for doc in context]
 
-        formatted_documents = "\n".join(
-            [f"{i}: {doc.page_content}" for i,
-                doc in enumerate(context)]
-        )
+        scores = self.document_reranker_pipeline(query_doc_pairs)
+        scored_docs = list(zip(context, [score["score"] for score in scores]))
+        filtered_docs = [doc for doc,
+                         score in scored_docs if score > threshold]
 
-        prompt = [
-            {"role": "system", "content": system_prompt},
-            {"role": "system", "content": f"The List of Documents: {formatted_documents}"},
-            {"role": "user", "content": f"The Subinput: {subquery}"}
-        ]
-
-        # Get response from LLM
-        response = self.llm_pipeline(
-            prompt)[0]['generated_text'][-1]['content']
         self._debug_print(
-            f"[!] Filter and Rerank - LLM response: \n{response}")
+            f"[!] Filter and Rerank - Filtered and proceeding with {len(filtered_docs)} document(s).")
 
-        try:
-            parsed_response = find_first_json_array(
-                response, ['document', 'relevance_score'])
-            if parsed_response is None:
-                raise ValueError("Response is not a list")
+        return filtered_docs
 
-            final_context = []
-
-            for doc in parsed_response:
-                index_number = doc['document']
-                relevance_score = doc['relevance_score']
-                document = context[index_number]
-
-                if relevance_score > 0.5:
-                    final_context.append(document)
-
-            return final_context
-
-        except (json.JSONDecodeError, KeyError):
-            self._debug_print(
-                f"[!] Failed to parse relevance data: {response}")
-            return []
-
-    def _generation(self, subqueries: list[dict]):
+    def _generation(self, query: str, context):
         """
         Generation and post-generation processing.
         """
@@ -587,70 +421,9 @@ class RAG_Model_Modular(BaseModel):
             "[!] Generation - Generating and combining responses...")
 
         # Generate responses for each subquery
-        for subquery_object in subqueries:
-            if not ("subquery" in subquery_object):
-                self._debug_print(
-                    "[!] Generation - Subquery not found in subquery object. Weird :/")
-                continue
-
-            subquery = subquery_object["subquery"]
-
-            if not ("context" in subquery_object):
-                context = []
-            else:
-                context = subquery_object["context"]
-
-            # Generate response based on the subquery and context
-            self._debug_print(
-                f'[!] Generation - Generating response for subquery: {subquery}')
-
-            system_prompt = (
-                "You are a knowledgeable and professional Teaching Assistant Chatbot at a university with perfect grammar."
-                "Always use the given context unless it is irrelevant to the question. Give concise answers using at most three sentences."
-                "Always provide answers that are concise, accurate, and confidently stated, without referencing the source document or context explicitly."
-                ""
-                "1. Always explain information clearly and assertively. Avoid tentative or overly speculative language."
-                "2. If there is insufficient context, summarise what is available and politely ask for more specific details, avoiding mention of a missing document or guide."
-                "3. For general questions without specific context, provide direct and accurate answers using your knowledge."
-                "4. For casual conversations, maintain a warm and professional tone, responding appropriately to greetings and social dialogue."
-                "5. Format all responses in markdown when necessary to ensure clarity and proper presentation."
-                "6. If no relevant answer can be provided, respond with a friendly greeting or ask for clarification."
-                ""
-            )
-            response = self.llm_pipeline(
-                [{"role": "system", "content": system_prompt},
-                    {"role": "system", "content": f"Context: {context}"},
-                    {"role": "user", "content": f"Input: {subquery}"}]
-            )[0]['generated_text'][-1]['content']
-
-            self._debug_print(f"[!] Generation - Response: {response}")
-
-            subquery_object["response"] = response
-
         self._debug_print(
-            "[!] Generation - Responses generated. Subqueries: \n", subqueries)
+            f'[!] Generation - Generating response for: {query}')
 
-        return subqueries
-
-    def _post_generation_processing(self, subqueries: list[dict]):
-        """
-        Post-generation processing and formatting.
-        """
-        self._debug_print(
-            "[!] Post-generation - Processing and formatting responses...")
-
-        # Combine responses with Subquery - response pair
-        combined_responses = []
-        for subquery_object in subqueries:
-            if not ("subquery" in subquery_object and "response" in subquery_object):
-                self._debug_print(
-                    "[!] Post-generation - Subquery or response not found in subquery object. Weird :/")
-                continue
-
-            combined_responses.append(subquery_object["response"])
-
-        # Final prompt to LLM to combine all responses
-        # TODO: Fix this fcking problem where the fcking LLM keep on mess shit up on the final output
         system_prompt = (
             "You are a knowledgeable and professional Teaching Assistant Chatbot at a university with perfect grammar."
             "Always use the given context unless it is irrelevant to the question. Give concise answers using at most three sentences."
@@ -661,25 +434,16 @@ class RAG_Model_Modular(BaseModel):
             "3. For general questions without specific context, provide direct and accurate answers using your knowledge."
             "4. For casual conversations, maintain a warm and professional tone, responding appropriately to greetings and social dialogue."
             "5. Format all responses in markdown when necessary to ensure clarity and proper presentation."
-            "6. If no relevant answer can be provided, respond with a friendly greeting or ask for clarification."
+            "6. If no relevant answer can be provided, respond with a friendly greeting, or ask for clarification if needed when you are asked a question without enough context."
             ""
         )
-
-        user_query = f"Given a list of responses, help me combine all into one response. You are to only answer with the combined response. Do not add headers."
-
-        self._debug_print(
-            "[!] Post-generation - Combine query: \n", combined_responses)
-
         response = self.llm_pipeline(
-            [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": (
-                 f"{user_query} Refer to the list of Responses: {combined_responses} "
-                 )}
-            ]
+            [{"role": "system", "content": system_prompt},
+                {"role": "system", "content": f"Context: {context}"},
+                {"role": "user", "content": f"Input: {query}"}]
         )[0]['generated_text'][-1]['content']
 
-        self._debug_print(f"[!] Post-generation - Final response: {response}")
+        self._debug_print(f"[!] Generation - Response: {response}")
 
         return response
 
@@ -698,12 +462,10 @@ class RAG_Model_Modular(BaseModel):
         self._debug_print("Querying the QA chain...")
 
         # Call all the functions in order
-        pre_retrieval_subqueries = self._preretrieval_query_formatting(
+        reformulated_query = self._preretrieval_query_formatting(
             query, chat_history[-chat_history_truncate_num:], attached_file_paths)
-        retrieval_subqueries = self._retrieval(pre_retrieval_subqueries)
-        generated_responses = self._generation(retrieval_subqueries)
-        final_response = self._post_generation_processing(generated_responses)
+        retrieved_context = self._retrieval(reformulated_query)
+        generated_response = self._generation(
+            reformulated_query, retrieved_context)
 
-        self._debug_print(f"Final response: {final_response}")
-
-        return final_response
+        return generated_response
