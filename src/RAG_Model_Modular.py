@@ -20,6 +20,7 @@ import pytesseract
 import json
 from pydantic import BaseModel, Field
 from langchain_core.output_parsers import PydanticOutputParser
+from src.Base_AI_Model import BaseModel as BaseAIModel
 
 
 class SubinputClass(BaseModel):
@@ -60,8 +61,9 @@ def find_first_json_array(text, required_keys=[]):
     return None
 
 
-class RAG_Model_Modular:
+class RAG_Model_Modular(BaseModel):
     def __init__(self, debug=False, device=None):
+        super().__init__()
         # Models
         self.embeddings = None
         self.vector_store = None
@@ -76,14 +78,6 @@ class RAG_Model_Modular:
         self.device = device or (1 if cuda.is_available() else 0)
         self.preretrieval_parser = PydanticOutputParser(
             pydantic_object=SubinputListClass)
-
-    def _debug_print(self, *msg):
-        """
-        Print debug messages
-        """
-        if self.debug:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S:%f")
-            print(f"[{timestamp}]", *msg, end="\n\n")
 
     def _convert_chat_history_to_string(self, messages: dict[str, str]):
         """
