@@ -45,10 +45,14 @@ class RAG_Model(BaseModel):
         """
         Convert ChatMessageModel to pipeline inputs
         """
-        return [{
-            "role": message['userType'],
-            "content": message['message']
-        } for message in messages]
+        return_string_list = []
+
+        for message in messages:
+            user_role = message['userType']
+            user_message = message['message']
+            return_string_list.append(f"{user_role}: {user_message}")
+
+        return "\n".join(return_string_list)
 
     def load_embeddings_model(self, model_name: str = "paraphrase-MiniLM-L6-v2", embedding_model_path: str = "embedding_models"):
         """Initialize HuggingFace embeddings."""
@@ -368,22 +372,26 @@ class RAG_Model(BaseModel):
         assert self.document_reranker_pipeline is not None, "Cross-encoder model not initialized."
 
         # Get reformulated query based on chat history and user query
-        truncated_chat_history = chat_history[:chat_history_truncate_num]
+        truncated_chat_history = chat_history[-chat_history_truncate_num:]
 
         self._debug_print("Querying the QA chain...")
 
         contextualize_q_system_prompt = (
-            "As a friendly university teaching assistant, given a chat history and the latest user question "
-            "which might reference prior context, rephrase the question as a standalone question understandable "
-            "without prior context. Do NOT add new information, make assumptions, or create your own questions. "
-            "If rephrasing is not possible without assumptions, return the question exactly as it is."
-            "Do NOT answer the question. Just rephrase it."
+            "As a friendly university teaching assistant, your task is to "
+            "given a chat history and the latest user question "
+            "rephrase the question as a standalone question understandable by an LLM including relevant context"
+            "1. Do NOT add new information, make assumptions, or create your own questions. "
+            "2. If rephrasing is not possible without assumptions, return the question exactly as it is."
+            "3. Do NOT answer the question. Just rephrase it."
+            "4. Do NOT change the meaning or context of the question."
+            "5. Chat history should only be used to provide additional context for the question, but maybe not be necessary."
         )
 
         reformulated_query = self.summarizer_pipeline(
             [
                 {"role": "system", "content": contextualize_q_system_prompt},
-                *self._convert_to_pipeline_inputs(truncated_chat_history),
+                {"role": "system",
+                    "content": f"Chat history: {self._convert_chat_history_to_string(truncated_chat_history)}"},
                 {"role": "human", "content": f"User question: {query}"}
             ]
         )[0]['generated_text'][-1]
@@ -428,16 +436,20 @@ class RAG_Model(BaseModel):
         # Restructure the final prompt passed into LLM
         # TODO: Add conversation history to the prompt (if needed, and if so, how much past history?)
         system_prompt = f"""
-You are a friendly teaching assistant at a university.
-Always use the given context to answer questions as accurately as possible.
-Use the minimum amount of sentences needed to provide a correct answer. Do not be to verbose.
-1. Provide the best answer based on the provided context. 
-2. If there's no context available, kindly mention that clarification or additional details are needed. Do not mention the lack of context in the answer.
-3. For questions that don't require specific context (general questions), answer using your general knowledge.
-4. For greetings or casual conversation, respond warmly and engage in a friendly dialogue.
+You are a knowledgeable and professional Teaching Assistant Chatbot at a university with perfect grammar.
+Always use the given context unless it is irrelevant to the question. Give concise answers using at most three sentences.
+Always provide answers that are concise, accurate, and confidently stated, without referencing the source document or context explicitly.
+
+1. Always explain information clearly and assertively. Avoid tentative or overly speculative language.
+2. If there is insufficient context, summarise what is available and politely ask for more specific details, avoiding mention of a missing document or guide.
+3. For general questions without specific context, provide direct and accurate answers using your knowledge.
+4. For casual conversations, maintain a warm and professional tone, responding appropriately to greetings and social dialogue.
+5. Format all responses in markdown when necessary to ensure clarity and proper presentation.
+6. If no relevant answer can be provided, respond with a friendly greeting or ask for clarification.
+
 Context: {context_ranked} 
 { f'Refer to the following user files: {attached_files_ranked}' if len(attached_files_ranked) > 0 else ''}
-{f'Refer to the following user images: {[{"description": image["description"], "text": image["text"]} for image in attached_images]}' if len(attached_images) > 0 else ''}
+{ f'Refer to the following user images: {[{"description": image["description"], "text": image["text"]} for image in attached_images]}' if len(attached_images) > 0 else ''}
 """.replace("\n", " ")
 
         messages = [
