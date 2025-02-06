@@ -6,7 +6,6 @@ Known Issues:
 - EVERYTHING!!! fja;fladkl;faj;dfjasldfj
 """
 
-from datetime import datetime
 import os
 import shutil
 from typing import List
@@ -15,6 +14,8 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import CharacterTextSplitter
 from transformers import pipeline
+
+from src.Base_AI_Model import BaseModel
 
 from .document_loader import load_documents
 
@@ -25,8 +26,9 @@ from torch import cuda
 import pytesseract
 
 
-class RAG_Model:
+class RAG_Model(BaseModel):
     def __init__(self, debug=False, device=None):
+        super().__init__(debug)
         self.embeddings = None
         self.vector_store = None
         self.vector_store_path = None
@@ -37,18 +39,9 @@ class RAG_Model:
 
         self.document_reranker_pipeline = None
 
-        self.debug = debug
         self.device = device or (1 if cuda.is_available() else 0)
 
-    def _debug_print(self, *msg):
-        """
-        Print debug messages
-        """
-        if self.debug:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[{timestamp}]", *msg, end="\n\n")
-
-    def _convert_chat_history_to_string(self, messages: dict[str, str]):
+    def _convert_to_pipeline_inputs(self, messages: dict[str, str]):
         """
         Convert ChatMessageModel to pipeline inputs
         """
