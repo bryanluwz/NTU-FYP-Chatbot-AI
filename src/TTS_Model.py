@@ -37,12 +37,12 @@ class TTS_Model_Map:
 
 
 class TTS_Model(BaseModel):
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, device=None):
         super().__init__(debug)
         self.tts_pipelines = {}
         self.active_tts_pipeline = None
 
-        self.device = 'cuda' if is_cuda_available() else 'cpu'
+        self.device = device or 'cuda' if is_cuda_available() else 'cpu'
 
     def initialise_tts(self, model_name: str, model_path: str = None, task: str = 'text-to-speech'):
         """

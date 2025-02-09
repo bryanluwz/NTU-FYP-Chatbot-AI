@@ -13,17 +13,20 @@ from torch import ones_like as torch_ones_like
 
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 
+from torch.cuda import is_available as is_cuda_available
+
 
 config = dotenv_values(".env")
 
 
 class STT_Model(BaseModel):
-    def __init__(self, debug=False, model_sample_rate=16000):
+    def __init__(self, debug=False, model_sample_rate=16000, device=None):
         super().__init__(debug)
 
         self.stt_pipeline = None
         self.stt_processor = None
         self.model_sampling_rate = model_sample_rate
+        self.device = device or 'cuda' if is_cuda_available() else 'cpu'
 
     def initialise_stt(self, model_name: str, model_path: str = None):
         """
@@ -45,7 +48,7 @@ class STT_Model(BaseModel):
             model_name, cache_dir=model_save_dir)
 
         self.stt_pipeline = WhisperForConditionalGeneration.from_pretrained(
-            model_name, cache_dir=model_save_dir)
+            model_name, cache_dir=model_save_dir).to(self.device)
 
     def stt(self, audio):
         """
@@ -59,10 +62,10 @@ class STT_Model(BaseModel):
         audio_array, _ = self._convert_bytes_to_array(audio)
 
         input_features = self.stt_processor(audio_array, sampling_rate=self.model_sampling_rate,
-                                            return_tensors="pt").input_features
+                                            return_tensors="pt").input_features.to(self.device)
 
         predicted_ids = self.stt_pipeline.generate(
-            input_features, attention_mask=torch_ones_like(input_features), pad_token_id=self.stt_processor.tokenizer.eos_token_id)
+            input_features, attention_mask=torch_ones_like(input_features).to(self.device), pad_token_id=self.stt_processor.tokenizer.eos_token_id)
 
         transcription = self.stt_processor.batch_decode(
             predicted_ids, skip_special_tokens=True)[0]

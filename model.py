@@ -22,7 +22,7 @@ config = dotenv_values(".env")
 
 LLM_MODEL_NAME = 'meta-llama/Llama-3.2-1B-Instruct'
 BLIP_MODEL_NAME = 'Salesforce/blip-image-captioning-base'
-CROSS_ENCODER_NAME = 'cross-encoder/ms-marco-MiniLM-L-6-v2'
+CROSS_ENCODER_NAME = 'cross-encoder/ms-marco-MiniLM-L-12-v2'
 LLM_TASK = 'text-generation'
 BLIP_TASK = 'image-to-text'
 

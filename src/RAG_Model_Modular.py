@@ -2,23 +2,28 @@
 This is the implementation of the RAG Chatbot model
 """
 
-
-from datetime import datetime
+import contextlib
+import sys
 import os
-import regex as re
 import shutil
-from typing import List
 from langchain_core.documents.base import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
+import faiss
+import numpy as np
 from langchain.text_splitter import CharacterTextSplitter
 from transformers import pipeline
 from .document_loader import load_documents
 from PIL import Image
 from torch import cuda
 import pytesseract
-import json
+from rank_bm25 import BM25Okapi
 from src.Base_AI_Model import BaseModel
+
+from transformers.utils.logging import set_verbosity_error
+
+# Silence wench
+set_verbosity_error()  # Silence Hugging Face logs
 
 
 class RAG_Model_Modular(BaseModel):
@@ -31,24 +36,27 @@ class RAG_Model_Modular(BaseModel):
         self.llm_pipeline = None
         self.blip_pipeline = None
 
-        self.document_reranker_pipeline = None
+        self.cross_encoder = None
 
         self.debug = debug
         self.device = device or (1 if cuda.is_available() else 0)
 
-    def _convert_chat_history_to_string(self, messages: dict[str, str]):
+    def _convert_chat_history_to_pipeline_inputs(self, query: str, messages: dict[str, str]):
         """
-        Convert ChatMessageModel to pipeline inputs
+        Convert ChatMessageModel to pipeline inputs, only limited to past 3 user inputs when references are available.
         """
-        return_string_list = []
+        user_history = [messages[0]] + [
+            message for message in messages if message["userType"] == "user"][-3:]
 
-        for message in messages:
-            user_role = message['userType']
-            user_message = message['message']
-            return_string_list.append(
-                f"{'{'}{user_role}: {user_message}{'}'}'")
+        # If last user message contains vague references, include history
+        if any(word in query.lower() for word in ["this", "that", "previous", "it"]):
+            history_prompt = [
+                {"role": message['userType'], "content": message['message']} for message in user_history]
+        else:
+            history_prompt = [
+                {"role": user_history[0]['userType'], "content": user_history[0]['message']}]
 
-        return "[" + "\n".join(return_string_list) + "]"
+        return history_prompt
 
     def load_embeddings_model(self, model_name: str = "paraphrase-MiniLM-L6-v2", embedding_model_path: str = "embedding_models"):
         """Initialize HuggingFace embeddings."""
@@ -61,7 +69,7 @@ class RAG_Model_Modular(BaseModel):
 
         # Load the embeddings model from the cache directory or download it
         self.embeddings = HuggingFaceEmbeddings(
-            model_name=model_name, show_progress=True, cache_folder=local_model_path)
+            model_name=model_name, show_progress=False, cache_folder=local_model_path)
 
     def load_vector_store(self, vector_store_path: str = "vector_store/<your_vector_store_name>", file_paths=[]):
         """Load the FAISS vector store if it exists."""
@@ -257,7 +265,7 @@ class RAG_Model_Modular(BaseModel):
             print(
                 f"✅ Cross-encoder model '{model_name}' saved to {model_save_path}.")
 
-        self.document_reranker_pipeline = reranker_pipeline
+        self.cross_encoder = reranker_pipeline
 
     def _describe_image(self, image_path: str):
         """
@@ -303,55 +311,33 @@ class RAG_Model_Modular(BaseModel):
 
         return docs
 
-    def _preretrieval_query_formatting(self, query: str, chat_history: list[any], attached_file_paths: list[str]):
+    def _preretrieval_query_formatting(self, query: str, chat_history: list[any]):
         """
         Preretrieval
         """
         assert self.llm_pipeline is not None, "LLM pipeline not initialized."
-        assert self.document_reranker_pipeline is not None, "Cross-encoder model not initialized."
+        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
 
         self._debug_print("[!] Pre-retrieval - Query reformulating...")
 
         self._debug_print(
             "[!] Pre-retrieval - Loading attached files and chat history...")
 
-        # Load attached files and
-        attached_files_docs = self._load_input_documents(attached_file_paths)
-        attached_images = [
-            doc for doc in attached_files_docs if "metadata" in doc and doc["metadata"]["source"] == "image"]
-        attached_files_docs_without_images = [
-            doc for doc in attached_files_docs if "metadata" not in doc and doc.metadata.get("source") != "image"]
-
-        # Load the chat history
-        # chat_history
-
         # Merging everything into one single user query
-        formatted_query = [
-            {"role": "system", "content": (
-                f"Attached files: {attached_files_docs_without_images}"
-                f"Attached images: {attached_images}"
-                f"Chat History: {self._convert_chat_history_to_string(chat_history)}"
-            )},
-        ]
+        formatted_query = self._convert_chat_history_to_pipeline_inputs(
+            query=query, messages=chat_history)
 
         self._debug_print(
             f"[!] Pre-retrieval - Querying LLM for input reformulation: {query}"
         )
 
-        # TODO: cant  output json ffs
+        # OH MY GOD, CAN YOU STOP ANSWERING THE QUESTION, IM ASKING YOU TO EXPAND IT AHAAHAHAHAHAHAHAH
+        # TODO: Maybe can use some other model to do this
         system_prompt = (
-            "You are a chatbot input reformulating expert at summarising conversation histories, attached documents, and user inputs. "
-            "You have access to a collection of course materials for a university course. "
-            "You have access to the chat history and any attached files and images, but these may not be relevant. "
-            ""
-            "Your task is to perform input reformulation by rephrasing the user question based on the provided information. "
-            "You should provide a concise and clear rephrased question, accompanied by contexts if necessary. "
-            ""
-            "Do NOT add new information, make assumptions, or create your own questions. "
-            "If rephrasing is not possible without assumptions, return the question exactly as it is."
-            "Do NOT answer the question. Just rephrase it."
-            "Do NOT change the meaning or context of the question."
-            ""
+            "Reformulate the user's question for better understanding. "
+            "DO NOT answer it. DO NOT add information. DO NOT explain. "
+            "ONLY return the reformulated query. If rephrasing is not needed, return the question unchanged."
+            "Please do not answer the question."
         )
 
         final_prompt = [
@@ -374,58 +360,135 @@ class RAG_Model_Modular(BaseModel):
         """
         assert self.vector_store is not None, "Vector store not initialized."
         assert self.llm_pipeline is not None, "LLM pipeline not initialized."
-        assert self.document_reranker_pipeline is not None, "Cross-encoder model not initialized."
+        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
 
         self._debug_print(
             "[!] Retrieval - Searching, filtering and ranking for relevant documents...")
 
-        # Sparse and dense retrieval??
-        context = self.vector_store.similarity_search(query, k=14)
+        # Pass context to the vector store for retrieval
+        # k = 20 for sparse retrieval, then passed to filtering for better retreival
+        context = self.vector_store.similarity_search(query, k=20)
         filtered_context = self._filter_rerank_with_llm(context, query)
 
         return filtered_context
 
     def _filter_rerank_with_llm(self, context: list[Document], query: str, threshold=0.5):
         """
-        Use the LLM to judge the relevance of each document in the context and rerank them.
+        Use BM25, dense retrieval, and cross-encoder reranking to filter and rank relevant documents.
         """
-        assert self.document_reranker_pipeline is not None, "Cross-encoder model not initialized."
+        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
 
         if not context:
             return []
 
         self._debug_print(
-            f"[!] Filter and Rerank - Filtering and reranking {len(context)} document(s)...")
+            f"[!] Filter and Rerank - Processing {len(context)} document(s)...")
 
-        # Rerank the list of documents based on relevance to the query
-        query_doc_pairs = [
-            {"text": query, "text_pair": doc.page_content} for doc in context]
+        # Extract document text
+        documents = [doc.page_content for doc in context]
 
-        scores = self.document_reranker_pipeline(query_doc_pairs)
-        scored_docs = list(zip(context, [score["score"] for score in scores]))
-        filtered_docs = [doc for doc,
-                         score in scored_docs if score > threshold]
+        # ---- STEP 1: BM25 Retrieval ----
+        tokenized_docs = [doc.split() for doc in documents]
+        bm25 = BM25Okapi(tokenized_docs)
+        bm25_scores = bm25.get_scores(query.split())
+
+        # Get top-k BM25 docs
+        bm25_top_k = 10  # Adjust this if needed
+        bm25_top_indices = np.argsort(bm25_scores)[::-1][:bm25_top_k]
+        bm25_top_docs = [context[i] for i in bm25_top_indices]
+
+        # ---- STEP 2: Dense Retrieval (FAISS) ----
+        doc_embeddings = np.array(
+            [self.embeddings.embed_query(doc.page_content) for doc in context])
+        dimension = doc_embeddings.shape[1]
+        faiss_index = faiss.IndexFlatIP(dimension)
+        faiss_index.add(doc_embeddings)
+
+        query_embedding = self.embeddings.embed_query(query)
+
+        # Retrieve top-k dense matches
+        dense_top_k = 10  # Adjust as needed
+        _, indices = faiss_index.search(
+            np.array([query_embedding]), dense_top_k)
+        dense_top_docs = [context[i] for i in indices[0]]
+
+        # ---- STEP 3: Merge & Deduplicate BM25 + Dense Results ----
+        merged_docs = {
+            doc.page_content: doc for doc in bm25_top_docs + dense_top_docs}.values()
+        merged_docs = list(merged_docs)  # Remove duplicates
 
         self._debug_print(
-            f"[!] Filter and Rerank - Filtered and proceeding with {len(filtered_docs)} document(s).")
+            f"[!] Hybrid retrieval - Merged {len(merged_docs)} unique document(s) from BM25 & Dense retrieval."
+        )
 
-        return filtered_docs
+        # Compute scores again only for the merged set
+        bm25_scores = np.array([bm25.get_scores(doc.page_content.split())[
+                               0] for doc in merged_docs])
+        dense_scores = np.array([faiss_index.search(np.array(
+            [self.embeddings.embed_query(doc.page_content)]), 1)[0][0][0] for doc in merged_docs])
 
-    def _generation(self, query: str, context):
+        # ---- STEP 4: Hybrid Scoring (BM25 + Dense) ----
+        bm25_scores = (bm25_scores - bm25_scores.min()) / \
+            (bm25_scores.max() - bm25_scores.min() + 1e-8)
+        dense_scores = (dense_scores - dense_scores.min()) / \
+            (dense_scores.max() - dense_scores.min() + 1e-8)
+
+        final_scores = 0.5 * bm25_scores + 0.5 * dense_scores
+        sorted_indices = np.argsort(final_scores)[::-1]  # Sort descending
+
+        # Get top-ranked docs based on hybrid retrieval
+        hybrid_top_docs = [merged_docs[i] for i in sorted_indices]
+
+        self._debug_print(
+            f"[!] Hybrid retrieval - Selected {len(hybrid_top_docs)} document(s) for reranking."
+        )
+
+        # ---- STEP 5: Cross-Encoder Reranking ----
+        query_doc_pairs = [{"text": self._truncate_text(
+            query, 256), "text_pair": self._truncate_text(doc.page_content, 256)} for doc in hybrid_top_docs]
+        scores = self.cross_encoder.predict(query_doc_pairs)
+
+        # Filter based on LLM relevance threshold
+        sorted_docs = sorted(
+            list(zip(hybrid_top_docs, scores)), key=lambda x: x[1]['score'], reverse=True)[:3]  # hehe :3
+
+        self._debug_print(
+            f"[!] Final Filtering - {len(sorted_docs)} document(s) passed the threshold."
+        )
+
+        return sorted_docs
+
+    def _truncate_text(self, text: str, max_tokens: int = 512):
+        """
+        Truncate text to the maximum number of tokens.
+        """
+        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
+        tokens = self.cross_encoder.tokenizer.encode(
+            text, truncation=True, max_length=max_tokens)
+        return self.cross_encoder.tokenizer.decode(tokens)
+
+    def _generation(self, query: str, context, attached_file_paths: list[str]):
         """
         Generation and post-generation processing.
         """
         assert self.llm_pipeline is not None, "LLM pipeline not initialized."
 
-        self._debug_print(
-            "[!] Generation - Generating and combining responses...")
-
-        # Generate responses for each subquery
+        # Generate response
         self._debug_print(
             f'[!] Generation - Generating response for: {query}')
 
+        # Load attached files and images
+        attached_files_docs = self._load_input_documents(attached_file_paths)
+        attached_images = [
+            doc for doc in attached_files_docs if "metadata" in doc and doc["metadata"]["source"] == "image"]
+        attached_files_docs_without_images = [
+            doc for doc in attached_files_docs if "metadata" not in doc and doc.metadata.get("source") != "image"]
+
+        f"Attached files: {attached_files_docs_without_images}"
+        f"Attached images: {attached_images}"
+
         system_prompt = (
-            "You are a knowledgeable and professional Teaching Assistant Chatbot at a university with perfect grammar."
+            "You are a knowledgeable and professional Teaching Assistant Chatbot at a Nanyang Technological University with perfect grammar."
             "Always use the given context unless it is irrelevant to the question. Give concise answers using at most three sentences."
             "Always provide answers that are concise, accurate, and confidently stated, without referencing the source document or context explicitly."
             ""
@@ -439,7 +502,7 @@ class RAG_Model_Modular(BaseModel):
         )
         response = self.llm_pipeline(
             [{"role": "system", "content": system_prompt},
-                {"role": "system", "content": f"Context: {context}"},
+                {"role": "system", "content": f"Refer to the following contexts: {context}"},
                 {"role": "user", "content": f"Input: {query}"}]
         )[0]['generated_text'][-1]['content']
 
@@ -447,7 +510,7 @@ class RAG_Model_Modular(BaseModel):
 
         return response
 
-    def query(self, query: str, chat_history: list[any], chat_history_truncate_num=5, search_k=10, top_k=2, attached_file_paths=[]):
+    def query(self, query: str, chat_history: list[any], chat_history_truncate_num=5, attached_file_paths=[]):
         """
         Query the QA chain with the given input.
 
@@ -457,15 +520,15 @@ class RAG_Model_Modular(BaseModel):
         """
         assert self.vector_store is not None, "Vector store not initialized."
         assert self.llm_pipeline is not None, "LLM pipeline not initialized."
-        assert self.document_reranker_pipeline is not None, "Cross-encoder model not initialized."
+        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
 
         self._debug_print("Querying the QA chain...")
 
         # Call all the functions in order
         reformulated_query = self._preretrieval_query_formatting(
-            query, chat_history[-chat_history_truncate_num:], attached_file_paths)
+            query, chat_history[-chat_history_truncate_num:])
         retrieved_context = self._retrieval(reformulated_query)
         generated_response = self._generation(
-            reformulated_query, retrieved_context)
+            query, retrieved_context, attached_file_paths)
 
         return generated_response
