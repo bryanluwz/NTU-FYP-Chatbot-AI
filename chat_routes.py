@@ -1,6 +1,6 @@
 from flask import Blueprint
 
-from chat_controller import query, stt, transferDocumentSrc, tts
+from chat_controller import query, stt, transferDocumentSrc, tts, post_query_image
 
 chat_bp = Blueprint('chat', __name__)
 
@@ -10,3 +10,5 @@ chat_bp.add_url_rule('/transferDocumentSrc',
 chat_bp.add_url_rule('/tts', view_func=tts, methods=['POST'])
 
 chat_bp.add_url_rule('/stt', view_func=stt, methods=['POST'])
+chat_bp.add_url_rule(
+    'postQueryImage', view_func=post_query_image, methods=['POST'])

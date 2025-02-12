@@ -123,8 +123,8 @@ def query():
         print("[!] Vector store already loaded, skipping...")
 
     # Here should also pass the files too
-    answer = qa_model.query(
-        user_message, chat_history, chat_history_truncate_num=4, attached_file_paths=filepaths)
+    answer, image_paths = qa_model.query(
+        user_message, chat_history, attached_file_paths=filepaths)
 
     # If no error (hopefully), remove temp files, before returning answer
     for filepath in filepaths:
@@ -134,7 +134,7 @@ def query():
     return jsonify({
         "success": True,
         "data": {
-            'response': answer}})
+            'response': answer, 'image_paths': image_paths}})
 
 
 def transferDocumentSrc():
@@ -186,6 +186,10 @@ def transferDocumentSrc():
         vector_store_path = os.path.join(
             VECTOR_STORE_PATH, f"{document_src_name}_{qa_model.embeddings.model_name}")
         shutil.rmtree(vector_store_path, ignore_errors=True)
+
+        # Force create new vector store
+        qa_model.load_vector_store(vector_store_path, [os.path.abspath(
+            file_path) for file_path in list_all_files(dir_name)])
 
         # Stonks
         print("[+] Document uploaded successfully")
@@ -249,3 +253,7 @@ def stt():
         "success": True,
         "data": {
             'response': text}})
+
+
+def post_query_image(filename):
+    return send_file(os.path.join(filename), as_attachment=True)

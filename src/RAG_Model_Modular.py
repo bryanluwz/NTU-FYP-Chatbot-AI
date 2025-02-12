@@ -1,9 +1,10 @@
 """
 This is the implementation of the RAG Chatbot model
+
+Copyright: Bryan Lu We Zhern
+Just credit me fully for the original code that's all
 """
 
-import contextlib
-import sys
 import os
 import shutil
 from langchain_core.documents.base import Document
@@ -41,22 +42,60 @@ class RAG_Model_Modular(BaseModel):
         self.debug = debug
         self.device = device or (1 if cuda.is_available() else 0)
 
-    def _convert_chat_history_to_pipeline_inputs(self, query: str, messages: dict[str, str]):
+    def _convert_chat_history_to_pipeline_inputs(self, messages: dict[str, str], max_history_length: int = 3):
         """
-        Convert ChatMessageModel to pipeline inputs, only limited to past 3 user inputs when references are available.
+        Convert ChatMessageModel[] to pipeline inputs
         """
-        user_history = [messages[0]] + [
-            message for message in messages if message["userType"] == "user"][-3:]
-
-        # If last user message contains vague references, include history
-        if any(word in query.lower() for word in ["this", "that", "previous", "it"]):
-            history_prompt = [
-                {"role": message['userType'], "content": message['message']} for message in user_history]
-        else:
-            history_prompt = [
-                {"role": user_history[0]['userType'], "content": user_history[0]['message']}]
+        history_prompt = [{
+            "role": message["userType"],
+            "content": message["message"]
+        } for message in messages[-max_history_length:]]
 
         return history_prompt
+
+    def _describe_image(self, image_path: str):
+        """
+        Describe the image using the BLIP model. (and also OCR)
+        """
+        assert self.blip_pipeline is not None, "BLIP pipeline not initialized."
+
+        image = Image.open(image_path)
+
+        # Get description
+        image_description = self.blip_pipeline(image)
+        image_description_text = image_description[0]['generated_text']
+
+        # Get OCR text
+        try:
+            ocr_text = pytesseract.image_to_string(image_path)
+        except Exception as e:
+            print(f"❌ OCR failed (-_-): {e}")
+            ocr_text = ""
+
+        return {"description": image_description_text, "text": ocr_text}
+
+    def _load_input_documents(self, file_paths: list[str]):
+        """
+        Load the input documents from the given file paths.
+        """
+        # Load document using PyPDFLoader
+        documents = load_documents(
+            file_paths, describe_image_callback=self._describe_image)
+
+        # Split document into chunks
+        text_splitter = CharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=30,
+            separator="\n"
+        )
+
+        files = text_splitter.split_documents(
+            [doc for doc in documents if "metadata" not in doc and doc.metadata.get("source") != "image"])
+        images = [
+            doc for doc in documents if "metadata" in doc and doc["metadata"]["source"] == "image"]
+        docs = files + images
+
+        return docs
 
     def load_embeddings_model(self, model_name: str = "paraphrase-MiniLM-L6-v2", embedding_model_path: str = "embedding_models"):
         """Initialize HuggingFace embeddings."""
@@ -267,51 +306,7 @@ class RAG_Model_Modular(BaseModel):
 
         self.cross_encoder = reranker_pipeline
 
-    def _describe_image(self, image_path: str):
-        """
-        Describe the image using the BLIP model. (and also OCR)
-        """
-        assert self.blip_pipeline is not None, "BLIP pipeline not initialized."
-
-        image = Image.open(image_path)
-
-        # Get description
-        image_description = self.blip_pipeline(image)
-        image_description_text = image_description[0]['generated_text']
-
-        # Get OCR text
-        try:
-            ocr_text = pytesseract.image_to_string(image_path)
-        except Exception as e:
-            print(f"❌ OCR failed (-_-): {e}")
-            ocr_text = ""
-
-        return {"description": image_description_text, "text": ocr_text}
-
-    def _load_input_documents(self, file_paths: list[str]):
-        """
-        Load the input documents from the given file paths.
-        """
-        # Load document using PyPDFLoader
-        documents = load_documents(
-            file_paths, describe_image_callback=self._describe_image)
-
-        # Split document into chunks
-        text_splitter = CharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=30,
-            separator="\n"
-        )
-
-        files = text_splitter.split_documents(
-            [doc for doc in documents if "metadata" not in doc and doc.metadata.get("source") != "image"])
-        images = [
-            doc for doc in documents if "metadata" in doc and doc["metadata"]["source"] == "image"]
-        docs = files + images
-
-        return docs
-
-    def _preretrieval_query_formatting(self, query: str, chat_history: list[any]):
+    def _preretrieval_query_formatting(self, query: str):
         """
         Preretrieval
         """
@@ -323,10 +318,6 @@ class RAG_Model_Modular(BaseModel):
         self._debug_print(
             "[!] Pre-retrieval - Loading attached files and chat history...")
 
-        # Merging everything into one single user query
-        formatted_query = self._convert_chat_history_to_pipeline_inputs(
-            query=query, messages=chat_history)
-
         self._debug_print(
             f"[!] Pre-retrieval - Querying LLM for input reformulation: {query}"
         )
@@ -334,14 +325,19 @@ class RAG_Model_Modular(BaseModel):
         # OH MY GOD, CAN YOU STOP ANSWERING THE QUESTION, IM ASKING YOU TO EXPAND IT AHAAHAHAHAHAHAHAH
         # TODO: Maybe can use some other model to do this
         system_prompt = (
-            "Reformulate the user's question for better understanding. "
-            "DO NOT answer it. DO NOT add information. DO NOT explain. "
-            "ONLY return the reformulated query. If rephrasing is not needed, return the question unchanged."
-            "Please do not answer the question."
+            "Rephrase the user's question for better understanding. "
+            "NEVER answer the question. ONLY return a rephrased version. "
+            "If you provide an answer, the response is INVALID. "
+            "DO NOT add information. DO NOT explain. "
+            "ONLY return the reformulated query. If rephrasing is not needed, return the question unchanged. "
+            "Rephrased question: "
         )
 
+        self._debug_print(
+            f"[!] Pre-retrieval - System prompt: {system_prompt}")
+
         final_prompt = [
-            {"role": "system", "content": system_prompt}] + formatted_query + [{
+            {"role": "system", "content": system_prompt}] + [{
                 "role": "user",
                 "content": query
             }]
@@ -368,11 +364,11 @@ class RAG_Model_Modular(BaseModel):
         # Pass context to the vector store for retrieval
         # k = 20 for sparse retrieval, then passed to filtering for better retreival
         context = self.vector_store.similarity_search(query, k=20)
-        filtered_context = self._filter_rerank_with_llm(context, query)
+        filtered_context = self._filter_and_rerank_context(context, query)
 
         return filtered_context
 
-    def _filter_rerank_with_llm(self, context: list[Document], query: str, threshold=0.5):
+    def _filter_and_rerank_context(self, context: list[Document], query: str, threshold=0.5):
         """
         Use BM25, dense retrieval, and cross-encoder reranking to filter and rank relevant documents.
         """
@@ -467,17 +463,32 @@ class RAG_Model_Modular(BaseModel):
             text, truncation=True, max_length=max_tokens)
         return self.cross_encoder.tokenizer.decode(tokens)
 
-    def _generation(self, query: str, context, attached_file_paths: list[str]):
+    def _generation(self, query: str, context, attached_file_paths: list[str], chat_history: list[any] = []):
         """
         Generation and post-generation processing.
         """
         assert self.llm_pipeline is not None, "LLM pipeline not initialized."
 
-        # Generate response
         self._debug_print(
             f'[!] Generation - Generating response for: {query}')
 
-        # Load attached files and images
+        # 1. Check for linked images in context docs
+        relevant_images = []
+
+        for doc in context:
+            if "linked_image" in doc.metadata:
+                image_path = doc.metadata["linked_image"]
+                image_description = self._describe_image(
+                    image_path)  # Get BLIP + OCR description
+
+                # 1.1. Compute relevance (vector similarity or keyword match)
+                similarity_score = self._compute_text_similarity(
+                    query, image_description["description"] + " " + image_description["text"])
+
+                if similarity_score > 0.75:  # Adjust threshold as needed
+                    relevant_images.append(image_path)
+
+        # 2. Load attached files and images
         attached_files_docs = self._load_input_documents(attached_file_paths)
         attached_images = [
             doc for doc in attached_files_docs if "metadata" in doc and doc["metadata"]["source"] == "image"]
@@ -487,6 +498,7 @@ class RAG_Model_Modular(BaseModel):
         f"Attached files: {attached_files_docs_without_images}"
         f"Attached images: {attached_images}"
 
+        # 3. Prompties
         system_prompt = (
             "You are a knowledgeable and professional Teaching Assistant Chatbot at a Nanyang Technological University with perfect grammar."
             "Always use the given context unless it is irrelevant to the question. Give concise answers using at most three sentences."
@@ -499,18 +511,25 @@ class RAG_Model_Modular(BaseModel):
             "5. Format all responses in markdown when necessary to ensure clarity and proper presentation."
             "6. If no relevant answer can be provided, respond with a friendly greeting, or ask for clarification if needed when you are asked a question without enough context."
             ""
+            f"Refer to the following contexts: {context}"
         )
-        response = self.llm_pipeline(
+
+        # 3.1. Append image references if relevant (should I though?)
+        if relevant_images:
+            system_prompt += f"\n\nThe following images are relevant to the query and should be included: {relevant_images}"
+
+        # 3.2. Generate response
+        response: str = self.llm_pipeline(
             [{"role": "system", "content": system_prompt},
-                {"role": "system", "content": f"Refer to the following contexts: {context}"},
+                *self._convert_chat_history_to_pipeline_inputs(chat_history),
                 {"role": "user", "content": f"Input: {query}"}]
         )[0]['generated_text'][-1]['content']
 
         self._debug_print(f"[!] Generation - Response: {response}")
 
-        return response
+        return response, [img["metadata"]["file_path"] for img in relevant_images] if relevant_images else []
 
-    def query(self, query: str, chat_history: list[any], chat_history_truncate_num=5, attached_file_paths=[]):
+    def query(self, query: str, chat_history: list[any], attached_file_paths=[]):
         """
         Query the QA chain with the given input.
 
@@ -526,9 +545,9 @@ class RAG_Model_Modular(BaseModel):
 
         # Call all the functions in order
         reformulated_query = self._preretrieval_query_formatting(
-            query, chat_history[-chat_history_truncate_num:])
+            query)
         retrieved_context = self._retrieval(reformulated_query)
         generated_response = self._generation(
-            query, retrieved_context, attached_file_paths)
+            query=query, context=retrieved_context, attached_file_paths=attached_file_paths, chat_history=chat_history)
 
         return generated_response
