@@ -143,7 +143,7 @@ def extract_images_from_docx(docx_path):
     return image_paths
 
 
-def load_documents(file_paths, describe_image_callback=None):
+def load_documents(file_paths, describe_image_callback=None, debug_print=False):
     """Load multiple documents from various formats into a single list of documents with metadata."""
     text_docs = []
 
@@ -182,8 +182,11 @@ def load_documents(file_paths, describe_image_callback=None):
 
             image_docs = []
 
-            for img_path in image_paths:
+            for i, img_path in enumerate(image_paths):
                 if describe_image_callback:
+                    if debug_print:
+                        print(
+                            f"🖼️ Describing image progress: {i} / {len(image_paths)}")
                     description = describe_image_callback(img_path)
                     image_doc = {
                         "description": description["description"],
@@ -202,10 +205,29 @@ def load_documents(file_paths, describe_image_callback=None):
                     if image_doc["metadata"]["file_name"].split("_")[0] in text_doc.page_content:
                         if "linked_image" not in text_doc.metadata:
                             text_doc.metadata["linked_image"] = [
-                                image_doc["metadata"]["file_path"]]
+                                {
+                                    "description": image_doc["description"],
+                                    "text": image_doc["text"],
+                                    "metadata": {
+                                        "file_name": os.path.basename(image_doc["metadata"]["file_path"]),
+                                        "file_path": image_doc["metadata"]["file_path"],
+                                        "source": "image"
+                                    }}]
                         else:
                             text_doc.metadata["linked_image"].append(
-                                image_doc["metadata"]["file_path"])
+                                {
+                                    "description": image_doc["description"],
+                                    "text": image_doc["text"],
+                                    "metadata": {
+                                        "file_name": os.path.basename(image_doc["metadata"]["file_path"]),
+                                        "file_path": image_doc["metadata"]["file_path"],
+                                        "source": "image"
+                                    }})
+
+            # Print number of images and text documents
+            if debug_print:
+                print(
+                    f"🖼️ Created {len(image_docs)} images and {len(text_docs)} text Document objects")
 
         elif file_type == 'image':
             if describe_image_callback is not None:

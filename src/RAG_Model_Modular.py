@@ -20,6 +20,7 @@ from torch import cuda
 import pytesseract
 from rank_bm25 import BM25Okapi
 from src.Base_AI_Model import BaseModel
+from sklearn.metrics.pairwise import cosine_similarity
 
 from transformers.utils.logging import set_verbosity_error
 
@@ -80,7 +81,7 @@ class RAG_Model_Modular(BaseModel):
         """
         # Load document using PyPDFLoader
         documents = load_documents(
-            file_paths, describe_image_callback=self._describe_image)
+            file_paths, describe_image_callback=self._describe_image, debug_print=self.debug)
 
         # Split document into chunks
         text_splitter = CharacterTextSplitter(
@@ -96,6 +97,35 @@ class RAG_Model_Modular(BaseModel):
         docs = files + images
 
         return docs
+
+    def _compute_text_similarity(self, text1: str, text2: str) -> float:
+        """
+        Compute cosine similarity between two text strings using embeddings.
+        """
+        assert self.embeddings is not None, "Embeddings model not initialized."
+
+        # Convert texts to embeddings
+        text1_embedding = self.embeddings.embed_query(text1)
+        text2_embedding = self.embeddings.embed_query(text2)
+
+        # Compute cosine similarity
+        similarity = cosine_similarity(
+            np.array(text1_embedding).reshape(1, -1),
+            np.array(text2_embedding).reshape(1, -1)
+        )[0][0]
+
+        return similarity
+
+    def _strip_metadata(self, documents: list[Document], keys=[]):
+        """
+        Strip metadata from the documents.
+        """
+        for doc in documents:
+            for key in keys:
+                if key in doc.metadata:
+                    del doc.metadata[key]
+
+        return documents
 
     def load_embeddings_model(self, model_name: str = "paraphrase-MiniLM-L6-v2", embedding_model_path: str = "embedding_models"):
         """Initialize HuggingFace embeddings."""
@@ -150,7 +180,7 @@ class RAG_Model_Modular(BaseModel):
         # Load document using PyPDFLoader
         # TODO: Need to add support for images here that are in the documents
         documents = load_documents(
-            file_paths, describe_image_callback=self._describe_image)
+            file_paths, describe_image_callback=self._describe_image, debug_print=self.debug)
 
         # Split document into chunks
         text_splitter = CharacterTextSplitter(
@@ -324,23 +354,28 @@ class RAG_Model_Modular(BaseModel):
 
         # OH MY GOD, CAN YOU STOP ANSWERING THE QUESTION, IM ASKING YOU TO EXPAND IT AHAAHAHAHAHAHAHAH
         # TODO: Maybe can use some other model to do this
+        # system_prompt = (
+        #     "Rephrase the user's question for better understanding. "
+        #     "NEVER answer the question. ONLY return a rephrased version. "
+        #     "If you provide an answer, the response is INVALID. "
+        #     "DO NOT add information. DO NOT explain. "
+        #     "ONLY return the reformulated query. If rephrasing is not needed, return the question unchanged. "
+        #     f"Now, please rephrase this question:\n {query} "
+        # )
+
         system_prompt = (
-            "Rephrase the user's question for better understanding. "
-            "NEVER answer the question. ONLY return a rephrased version. "
-            "If you provide an answer, the response is INVALID. "
-            "DO NOT add information. DO NOT explain. "
-            "ONLY return the reformulated query. If rephrasing is not needed, return the question unchanged. "
-            "Rephrased question: "
+            "Generate a list of key words and key phrases with similar meanings to the user's query. "
+            "DO NOT answer the question. DO NOT rephrase the query. "
+            "ONLY return the related words and synonyms. "
+            # "Include variations in phrasing, formal and informal terms, and relevant keywords. "
+            f"Now, generate a few similar words for this query:\n {query} "
         )
 
         self._debug_print(
             f"[!] Pre-retrieval - System prompt: {system_prompt}")
 
         final_prompt = [
-            {"role": "system", "content": system_prompt}] + [{
-                "role": "user",
-                "content": query
-            }]
+            {"role": "system", "content": system_prompt}]
 
         reformulated_user_query = self.llm_pipeline(final_prompt)[
             0]['generated_text'][-1]['content']
@@ -446,13 +481,15 @@ class RAG_Model_Modular(BaseModel):
 
         # Filter based on LLM relevance threshold
         sorted_docs = sorted(
-            list(zip(hybrid_top_docs, scores)), key=lambda x: x[1]['score'], reverse=True)[:3]  # hehe :3
+            list(zip(hybrid_top_docs, scores)), key=lambda x: x[1]['score'], reverse=True)[:3]  # Just arbitrarily set to a number
+
+        docs = [doc[0] for doc in sorted_docs]
 
         self._debug_print(
             f"[!] Final Filtering - {len(sorted_docs)} document(s) passed the threshold."
         )
 
-        return sorted_docs
+        return docs
 
     def _truncate_text(self, text: str, max_tokens: int = 512):
         """
@@ -477,16 +514,25 @@ class RAG_Model_Modular(BaseModel):
 
         for doc in context:
             if "linked_image" in doc.metadata:
-                image_path = doc.metadata["linked_image"]
-                image_description = self._describe_image(
-                    image_path)  # Get BLIP + OCR description
+                image_dict_list = doc.metadata["linked_image"]
 
-                # 1.1. Compute relevance (vector similarity or keyword match)
-                similarity_score = self._compute_text_similarity(
-                    query, image_description["description"] + " " + image_description["text"])
+                for image_dict in image_dict_list:
+                    image_description = image_dict["description"]
+                    image_text = image_dict["text"]
+                    image_path = image_dict["metadata"]["file_path"]
 
-                if similarity_score > 0.75:  # Adjust threshold as needed
-                    relevant_images.append(image_path)
+                    # 1.1. Compute relevance (vector similarity or keyword match)
+                    similarity_score = self._compute_text_similarity(
+                        query, image_description + " " + image_text)
+                    self._debug_print(
+                        f"[!] Generation - Similarity score for '{image_description}': {similarity_score}")
+
+                    if similarity_score > 0.75:  # Adjust threshold as needed
+                        self._debug_print(
+                            f"[!] Generation - Relevant image found (i think): {image_path}")
+                        relevant_images.append(image_path)
+
+                del doc.metadata["linked_image"]
 
         # 2. Load attached files and images
         attached_files_docs = self._load_input_documents(attached_file_paths)
@@ -495,33 +541,37 @@ class RAG_Model_Modular(BaseModel):
         attached_files_docs_without_images = [
             doc for doc in attached_files_docs if "metadata" not in doc and doc.metadata.get("source") != "image"]
 
-        f"Attached files: {attached_files_docs_without_images}"
-        f"Attached images: {attached_images}"
+        context = self._strip_metadata(context, keys=["file_path"])
 
         # 3. Prompties
         system_prompt = (
-            "You are a knowledgeable and professional Teaching Assistant Chatbot at a Nanyang Technological University with perfect grammar."
-            "Always use the given context unless it is irrelevant to the question. Give concise answers using at most three sentences."
-            "Always provide answers that are concise, accurate, and confidently stated, without referencing the source document or context explicitly."
-            ""
-            "1. Always explain information clearly and assertively. Avoid tentative or overly speculative language."
-            "2. If there is insufficient context, summarise what is available and politely ask for more specific details, avoiding mention of a missing document or guide."
-            "3. For general questions without specific context, provide direct and accurate answers using your knowledge."
-            "4. For casual conversations, maintain a warm and professional tone, responding appropriately to greetings and social dialogue."
-            "5. Format all responses in markdown when necessary to ensure clarity and proper presentation."
-            "6. If no relevant answer can be provided, respond with a friendly greeting, or ask for clarification if needed when you are asked a question without enough context."
-            ""
-            f"Refer to the following contexts: {context}"
+            "You are a professional and knowledgeable Teaching Assistant Chatbot at Nanyang Technological University with perfect grammar. "
+            "Always use the given context unless it is irrelevant to the question. Provide concise, accurate, and confidently stated answers in at most three sentences. "
+
+            "1. Explain information clearly and assertively without using speculative or uncertain language. "
+            "2. If the context is insufficient, summarize what is available and politely ask for clarification without mentioning missing documents. "
+            "3. For general questions without specific context, provide direct and factual answers based on your knowledge. "
+            "4. Maintain a warm yet professional tone in casual conversations, responding appropriately to greetings and social dialogue. "
+            "5. Use Markdown formatting when necessary for clarity and structured presentation. "
+            "6. If no relevant answer can be provided, ask for clarification instead of speculating. "
+            "7. Do not generate false or misleading information. Always prioritize accuracy by strictly using the provided context. "
+
+            f"Refer to the following contexts: {context} "
+            f"Attached files: {attached_files_docs_without_images} "
+            f"Attached images: {attached_images + relevant_images}"
         )
 
         # 3.1. Append image references if relevant (should I though?)
+        self._debug_print(context)
+
         if relevant_images:
             system_prompt += f"\n\nThe following images are relevant to the query and should be included: {relevant_images}"
+            self._debug_print(relevant_images)
 
         # 3.2. Generate response
         response: str = self.llm_pipeline(
             [{"role": "system", "content": system_prompt},
-                *self._convert_chat_history_to_pipeline_inputs(chat_history),
+                *self._convert_chat_history_to_pipeline_inputs(chat_history[-3:]),
                 {"role": "user", "content": f"Input: {query}"}]
         )[0]['generated_text'][-1]['content']
 
