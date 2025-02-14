@@ -354,6 +354,7 @@ class RAG_Model_Modular(BaseModel):
 
         # OH MY GOD, CAN YOU STOP ANSWERING THE QUESTION, IM ASKING YOU TO EXPAND IT AHAAHAHAHAHAHAHAH
         # TODO: Maybe can use some other model to do this
+        # TODO: Better prompt???
         # system_prompt = (
         #     "Rephrase the user's question for better understanding. "
         #     "NEVER answer the question. ONLY return a rephrased version. "
@@ -449,7 +450,7 @@ class RAG_Model_Modular(BaseModel):
         merged_docs = list(merged_docs)  # Remove duplicates
 
         self._debug_print(
-            f"[!] Hybrid retrieval - Merged {len(merged_docs)} unique document(s) from BM25 & Dense retrieval."
+            f"[!] Hybrid retrieval - Retrieved {len(merged_docs)} unique document(s) from BM25 & Dense retrieval."
         )
 
         # Compute scores again only for the merged set
@@ -559,6 +560,12 @@ class RAG_Model_Modular(BaseModel):
             f"Refer to the following contexts: {context} "
             f"Attached files: {attached_files_docs_without_images} "
             f"Attached images: {attached_images + relevant_images}"
+
+            f"{'\n'.join([
+                str(i) for i in self._convert_chat_history_to_pipeline_inputs(chat_history[-3:])
+            ])}",
+            # {"role": "user", "content": f"Input: {query}"}
+            f"Answer this question: {query}"
         )
 
         # 3.1. Append image references if relevant (should I though?)
@@ -570,9 +577,7 @@ class RAG_Model_Modular(BaseModel):
 
         # 3.2. Generate response
         response: str = self.llm_pipeline(
-            [{"role": "system", "content": system_prompt},
-                *self._convert_chat_history_to_pipeline_inputs(chat_history[-3:]),
-                {"role": "user", "content": f"Input: {query}"}]
+            [{"role": "system", "content": system_prompt}]
         )[0]['generated_text'][-1]['content']
 
         self._debug_print(f"[!] Generation - Response: {response}")
