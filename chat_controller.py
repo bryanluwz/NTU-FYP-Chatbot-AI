@@ -131,9 +131,10 @@ def query():
         os.remove(filepath)
         pass
 
-    return jsonify({
-        "success": True,
-        "data": {
+    return jsonify(
+        {"status": {
+            "code": 400},
+            "data": {
             'response': answer, 'image_paths': image_paths}})
 
 
@@ -255,5 +256,6 @@ def stt():
             'response': text}})
 
 
-def post_query_image(filename):
+def post_query_image():
+    filename = request.form.get("filename")
     return send_file(os.path.join(filename), as_attachment=True)

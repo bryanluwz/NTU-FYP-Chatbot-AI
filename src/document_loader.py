@@ -1,8 +1,9 @@
-from docx import Document
+from docx import Document as docx_Document
 import fitz
 import os
 
 import fitz  # PyMuPDF
+from langchain_core.documents import Document
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
 
 FILE_TYPES = {
@@ -129,7 +130,7 @@ def extract_images_from_pdf(pdf_path):
 
 def extract_images_from_docx(docx_path):
     """Extract images from a DOCX file with their order of appearance."""
-    document = Document(docx_path)
+    document = docx_Document(docx_path)
     base_dir = os.path.splitext(docx_path)[0] + "_images"
     os.makedirs(base_dir, exist_ok=True)
     image_data = []
@@ -215,8 +216,9 @@ def load_documents(file_paths, describe_image_callback=None, debug_print=False):
                 if "text" in description and "description" in description:
                     print(
                         f"[?] Image file is under testing for support: {ext}")
-                    doc = {"description": description["description"], "text": description["text"], "metadata": {
-                        "file_name": os.path.basename(file_path), "file_path": file_path, "source": "image"}}
+                    doc = Document(
+                        page_content=f"{description['text']}, {description['description']}",  metadata={
+                            "file_name": os.path.basename(file_path), "file_path": file_path, "source": "image"})
                     text_docs.append(doc)
                 else:
                     print(f"❌ Unsupported image format: {ext}")
