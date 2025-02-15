@@ -270,7 +270,8 @@ class RAG_Model(BaseModel):
                 tokenizer=model_save_path,
                 max_new_tokens=max_new_tokens,
                 framework="pt",
-                device_map="auto"
+                device_map="auto",
+                torch_dtype="auto"
             )
         else:
             # Get the model size before downloading
@@ -284,7 +285,8 @@ class RAG_Model(BaseModel):
                 max_new_tokens=max_new_tokens,
                 do_sample=True,
                 temperature=temperature,
-                device_map="auto"
+                device_map="auto",
+                torch_dtype="auto"
             )
 
             # Save the model and tokenizer
@@ -553,10 +555,10 @@ class RAG_Model(BaseModel):
                     similarity_score = self._compute_text_similarity(
                         query, image_description + " " + image_text)
                     self._debug_print(
-                        f"[!] Generation - Similarity score for '{image_description}': {similarity_score}")
+                        f"[!] Generation - Similarity score for '{image_description}': {similarity_score:.3f}")
 
                     # Adjust threshold as needed
-                    if similarity_score > 0.1 and not any([img["metadata"]["file_path"] == image_path for img in relevant_images]):
+                    if similarity_score > 0.3 and not any([img["metadata"]["file_path"] == image_path for img in relevant_images]):
                         self._debug_print(
                             f"[!] Generation - Relevant image found (i think): {image_path}")
                         relevant_images.append({
