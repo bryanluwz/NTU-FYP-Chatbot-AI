@@ -7,25 +7,29 @@ Just credit me fully for the original code that's all
 
 import os
 import shutil
+import numpy as np
+from PIL import Image
+import pytesseract
+import faiss
+from torch import cuda, device as torch_device, no_grad as torch_no_grad, OutOfMemoryError
+
+from langchain.text_splitter import CharacterTextSplitter
 from langchain_core.documents.base import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-import faiss
-import numpy as np
-from langchain.text_splitter import CharacterTextSplitter
-from transformers import pipeline
-from .document_loader import load_documents
-from PIL import Image
-from torch import cuda
-import pytesseract
+
 from rank_bm25 import BM25Okapi
-from src.Base_AI_Model import BaseModel
 from sklearn.metrics.pairwise import cosine_similarity
 
+from transformers import pipeline
+from transformers import BlipProcessor, BlipForConditionalGeneration
 from transformers.utils.logging import set_verbosity_error
 
+from .document_loader import load_documents
+from src.Base_AI_Model import BaseModel
+
 # Silence wench
-set_verbosity_error()  # Silence Hugging Face logs i think
+set_verbosity_error()  # Silence Hugging Face logs i think, maybe it's not even working
 
 
 class RAG_Model(BaseModel):
@@ -36,7 +40,9 @@ class RAG_Model(BaseModel):
         self.vector_store_path = None
 
         self.llm_pipeline = None
-        self.blip_pipeline = None
+
+        self.blip_processor = None
+        self.blip_model = None
 
         self.cross_encoder = None
 
@@ -58,14 +64,23 @@ class RAG_Model(BaseModel):
         """
         Describe the image using the BLIP model. (and also OCR)
         """
-        # TODO: See if can batch BLIP or not
-        assert self.blip_pipeline is not None, "BLIP pipeline not initialized."
+        assert (
+            self.blip_model is not None and self.blip_processor is not None), "BLIP pipeline not initialized."
 
         image = Image.open(image_path)
 
+        inputs = self.blip_processor(
+            image, return_tensors="pt", padding="max_length", max_length=128, truncation=True).to(self.blip_model.device)
+
+        with torch_no_grad():
+            outputs = self.blip_model.generate(**inputs)
+
+        image_description_text = self.blip_processor.decode(
+            outputs[0], skip_special_tokens=True)
+
         # Get description
-        image_description = self.blip_pipeline(image)
-        image_description_text = image_description[0]['generated_text']
+        # image_description = self.blip_pipeline(image)
+        # image_description_text = image_description[0]['generated_text']
 
         # Get OCR text
         try:
@@ -76,13 +91,51 @@ class RAG_Model(BaseModel):
 
         return {"description": image_description_text, "text": ocr_text}
 
+    def _describe_images(self, image_paths: list[str]):
+        """
+        Describe the images using the BLIP model. (and also OCR)
+        """
+        assert (
+            self.blip_model is not None and self.blip_processor is not None), "BLIP pipeline not initialized."
+
+        images = [Image.open(image_path) for image_path in image_paths]
+        inputs = self.blip_processor(
+            images, return_tensors="pt", padding="max_length", max_length=128, truncation=True).to(self.blip_model.device)
+
+        with torch_no_grad():
+            outputs = self.blip_model.generate(**inputs)
+
+        image_descriptions_text = [self.blip_processor.decode(out, skip_special_tokens=True)
+                                   for out in outputs]
+
+        # Get description
+        # image_descriptions = self.blip_pipeline(images)
+        # self._debug_print(image_descriptions)
+        # image_descriptions_text = [img_desc[0]['generated_text']
+        #                            for img_desc in image_descriptions]
+
+        # Get OCR text
+        ocr_texts = []
+        for image_path in image_paths:
+            try:
+                ocr_text = pytesseract.image_to_string(image_path)
+            except Exception as e:
+                print(f"❌ OCR failed (-_-): {e}")
+                ocr_text = ""
+            ocr_texts.append(ocr_text)
+
+        return [{"description": img_desc_text, "text": ocr_text} for img_desc_text, ocr_text in zip(image_descriptions_text, ocr_texts)]
+
     def _load_input_documents(self, file_paths: list[str]):
         """
         Load the input documents from the given file paths.
         """
         # Load document using PyPDFLoader
         documents = load_documents(
-            file_paths, describe_image_callback=self._describe_image, debug_print=self.debug)
+            file_paths,
+            describe_image_callback=self._describe_image,
+            batch_describe_image_callback=self._describe_images,
+            debug_print=self.debug)
 
         # Split document into chunks
         text_splitter = CharacterTextSplitter(
@@ -179,9 +232,10 @@ class RAG_Model(BaseModel):
         os.makedirs(vector_store_path, exist_ok=True)
 
         # Load document using PyPDFLoader
-        # TODO: Need to add support for images here that are in the documents
         documents = load_documents(
-            file_paths, describe_image_callback=self._describe_image, debug_print=self.debug)
+            file_paths, describe_image_callback=self._describe_image,
+            batch_describe_image_callback=self._describe_images,
+            debug_print=self.debug)
 
         # Split document into chunks
         text_splitter = CharacterTextSplitter(
@@ -248,63 +302,41 @@ class RAG_Model(BaseModel):
 
         # Check if the model is already saved
         # `device` cannot be set to 'auto' for BLIP, so we need to specify the device manually, if GPU cannot be used, fall back to CPU
-        if os.path.exists(model_save_path):
-            try:
-                print(f"🔄 Loading BLIP model from {model_save_path}...")
-                blip_pipeline = pipeline(
-                    task=task,
-                    model=model_save_path,
-                    tokenizer=model_save_path,
-                    framework="pt",
-                    device=self.device  # Use self.device to specify the device
-                )
 
-            except RuntimeError as e:
-                if "CUDA error: invalid device ordinal" in str(e):
-                    print(
-                        "⚠️ Idk there's some weird GPU device behaviour. Falling back to CPU.")
-                    self.device = -1  # Use CPU
-                    blip_pipeline = pipeline(
-                        task=task,
-                        model=model_save_path,
-                        tokenizer=model_save_path,
-                        framework="pt",
-                        device=self.device  # Use CPU
-                    )
-                else:
-                    raise e
+        print(f"🔄 Loading BLIP model from {model_save_path}...")
+        device = torch_device("cuda" if self.device == 1 else "cpu")
+
+        if os.path.exists(model_save_path):
+            self.blip_processor = BlipProcessor.from_pretrained(
+                model_save_path)
+
+            try:
+                self.blip_model = BlipForConditionalGeneration.from_pretrained(
+                    model_save_path, return_dict_in_generate=True).to(device)
+            except OutOfMemoryError:
+                self.blip_model = BlipForConditionalGeneration.from_pretrained(
+                    model_save_path, return_dict_in_generate=True).to(torch_device("cpu"))
+            except Exception as e:
+                raise e
         else:
-            # Get the model size before downloading
             print(
                 f"⬇️ Downloading and saving BLIP model '{model_name}' to {model_save_path}...")
+
+            self.blip_processor = BlipProcessor.from_pretrained(model_name)
+
             try:
-                blip_pipeline = pipeline(
-                    task=task,
-                    model=model_name,
-                    tokenizer=model_name,
-                    framework="pt",
-                    device=self.device  # Use self.device to specify the device
-                )
-            except RuntimeError as e:
-                if "CUDA error: invalid device ordinal" in str(e):
-                    print(
-                        "⚠️ Idk there's some weird GPU device behaviour. Falling back to CPU.")
-                    self.device = -1  # Use CPU
-                    blip_pipeline = pipeline(
-                        task=task,
-                        model=model_name,
-                        tokenizer=model_name,
-                        framework="pt",
-                        device=self.device  # Use CPU
-                    )
-                else:
-                    raise e
+                self.blip_model = BlipForConditionalGeneration.from_pretrained(
+                    model_name, return_dict_in_generate=True).to(device)
+            except OutOfMemoryError:
+                self.blip_model = BlipForConditionalGeneration.from_pretrained(
+                    model_name, return_dict_in_generate=True).to(torch_device("cpu"))
+            except Exception as e:
+                raise e
 
             # Save the model
-            blip_pipeline.save_pretrained(model_save_path)
+            self.blip_processor.save_pretrained(model_save_path)
+            self.blip_model.save_pretrained(model_save_path)
             print(f"✅ BLIP model '{model_name}' saved to {model_save_path}.")
-
-        self.blip_pipeline = blip_pipeline
 
     def initialize_cross_encoder(self, model_name: str = 'cross-encoder/ms-marco-MiniLM-L-6-v2', model_path: str = None):
         """
