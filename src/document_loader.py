@@ -145,7 +145,7 @@ def extract_images_from_docx(docx_path):
     return image_data
 
 
-def load_documents(file_paths, describe_image_callback=None, batch_describe_image_callback=None, debug_print=False):
+def load_documents(file_paths, describe_image_callback=None, debug_print=False):
     """Load multiple documents from various formats into a single list of documents with metadata."""
     text_docs = []
 
@@ -178,34 +178,18 @@ def load_documents(file_paths, describe_image_callback=None, batch_describe_imag
                     text_docs.append(doc)
 
             image_docs = []
-            if batch_describe_image_callback:
-                image_paths = [img_path for _, img_path in image_data]
-                image_descriptions = batch_describe_image_callback(image_paths)
 
-                for i, (order, img_path) in enumerate(image_data):
-                    if debug_print:
-                        print(
-                            f"🖼️ Describing image progress: {i} / {len(image_data)}")
-                    description = image_descriptions[i]
-                    image_doc = {
-                        "description": description["description"],
-                        "text": description["text"],
-                        "metadata": {"file_name": os.path.basename(img_path), "file_path": img_path, "source": "image"}
-                    }
-                    image_docs.append((order, image_doc))
-
-            elif describe_image_callback:
-                for i, (order, img_path) in enumerate(image_data):
-                    if debug_print:
-                        print(
-                            f"🖼️ Describing image progress: {i} / {len(image_data)}")
-                    description = describe_image_callback(img_path)
-                    image_doc = {
-                        "description": description["description"],
-                        "text": description["text"],
-                        "metadata": {"file_name": os.path.basename(img_path), "file_path": img_path, "source": "image"}
-                    }
-                    image_docs.append((order, image_doc))
+            for i, (order, img_path) in enumerate(image_data):
+                if debug_print:
+                    print(
+                        f"🖼️ Describing image progress: {i} / {len(image_data)}")
+                description = describe_image_callback(img_path)
+                image_doc = {
+                    "description": description["description"],
+                    "text": description["text"],
+                    "metadata": {"file_name": os.path.basename(img_path), "file_path": img_path, "source": "image"}
+                }
+                image_docs.append((order, image_doc))
 
             # Link images to text by page/order
             for order, image_doc in image_docs:
