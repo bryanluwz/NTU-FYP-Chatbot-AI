@@ -200,7 +200,7 @@ class RAG_Model(BaseModel):
         self.vector_store_path = vector_store_path
         self.vector_store = vectorstore
 
-    def initialize_llm(self, model_name: str = 'distilgpt2', max_new_tokens: int = 1024, temperature: float = 0.6, model_path: str = None, task: str = "text-generation"):
+    def initialize_llm(self, model_name: str = 'distilgpt2', max_new_tokens: int = 256, temperature: float = 0.6, model_path: str = None, task: str = "text-generation"):
         """
         Initialize the pipeline for text generation, and save/load the model.
         """
@@ -392,7 +392,7 @@ class RAG_Model(BaseModel):
 
         return filtered_context
 
-    def _filter_and_rerank_context(self, context: list[Document], query: str, num_return=5):
+    def _filter_and_rerank_context(self, context: list[Document], query: str, num_return=3):
         """
         Use BM25, dense retrieval, and cross-encoder reranking to filter and rank relevant documents.
         """
@@ -574,6 +574,7 @@ class RAG_Model(BaseModel):
             "You are a teaching assistant at Nanyang Technological University in Singapore. "
             "You have a vast knowledge of the course material. "
             "You are tasked to provide a short and concise answer to the user's question. With at most 3 sentences. "
+            "Never provide a long answer, otherwise, it will not be helpful. "
             "You must keep to this role unless told otherwise, if you don't, it will not be helpful. "
             "Answer as if you are a human manner, without revealing you are a chatbot. "
             "\n"
@@ -597,14 +598,6 @@ class RAG_Model(BaseModel):
             messages.append(
                 {"role": "user", "content": f"Context: {context_str}"})
 
-        # if attached_files_docs_without_images:
-        #     messages.append(
-        #         {"role": "user", "content": f"Here are some attached files you should reference: {self._get_page_content(attached_files_docs_without_images)}"})
-
-        # if attached_images:
-        #     messages.append(
-        #         {"role": "user", "content": f"Here are some attached images description you should reference: {self._get_page_content(attached_images)}"})
-
         user_message = ""
         if attached_files_docs_without_images:
             attached_content = self._get_page_content(
@@ -620,14 +613,11 @@ class RAG_Model(BaseModel):
             user_message += f"Refer to these attached images: {attached_content}\n"
 
         messages.append(
-            {"role": "user", "content": user_message + f"My question is {query}"})
-
-        self._debug_print(
-            messages)
+            {"role": "user", "content": user_message + f"Answer in a concise manner, The user input is '{query}'"})
 
         # 3.2. Generate response
         response: str = self.llm_pipeline(
-            messages
+            messages, eos_token_id=self.llm_pipeline.tokenizer.eos_token_id
         )[0]['generated_text'][-1]['content']
 
         self._debug_print(f"[!] Generation - Response: {response}")
@@ -672,7 +662,13 @@ class RAG_Model(BaseModel):
                 f"[!] Query - Attached files are present, ignoring RAG model...")
 
         # TEMP: Chat history disable except first message
+        if chat_history:
+            if chat_history[0] != chat_history[-1]:
+                chat_history = [chat_history[0], chat_history[-1]]
+            else:
+                chat_history = [chat_history[0]]
+
         generated_response = self._generation(
-            query=query, context=retrieved_context or [], attached_file_paths=attached_file_paths, chat_history=[chat_history[-1]])
+            query=query, context=retrieved_context or [], attached_file_paths=attached_file_paths, chat_history=chat_history)
 
         return generated_response
