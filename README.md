@@ -26,6 +26,23 @@ Key features of the AI server include:
 
 2. Install the dependencies:
 
+   This project uses Python 3.10.14.
+
+   Make sure to have some virtual environment set up. If you don't, you can create one using:
+
+   ```bash
+   python -m venv venv
+   ```
+
+   Then, activate the virtual environment:
+
+   ```bash
+   # On Windows
+   .\venv\Scripts\Activate.ps1
+   # On Unix or MacOS
+   source ./venv/bin/activate
+   ```
+
    ```bash
    pip install -r requirements.txt
    ```
