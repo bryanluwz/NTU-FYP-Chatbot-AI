@@ -582,7 +582,7 @@ class RAG_Model(BaseModel):
             "1. Either provide a direct answer or ask for clarification. "
             "2. Do not hallucinate. Do not make up factual information. "
             "3. Use the provided context necessarily to generate a relevant answer, without making up information, but also make sure that it is coherent. "
-            "4. Use markdown formatting when necessary for clarity and structured presentation. "
+            "4. Use markdown formatting only when necessary. "
             "5. DO NOT generate a long response. Only provide a short and concise answer. "
         )
 
