@@ -1,14 +1,16 @@
 from flask import after_this_request, request, jsonify, json, send_file
-from src.functions import list_all_files
 import shutil
-
 import os
 import zipfile
+from dotenv import dotenv_values
 
+from src.functions import list_all_files
 from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME, VECTOR_STORE_PATH, create_stt_model, create_tts_model
 
-from dotenv import dotenv_values
+
 config = dotenv_values(".env")
+chat_config = {"debug": False}
+
 
 """
 Initialise some stuff
@@ -26,6 +28,15 @@ os.makedirs(TTS_MODEL_PATH, exist_ok=True)
 """
 Helper functions
 """
+
+
+def init_chat_config(init_config: dict):
+    """
+    Update config dict based on the passed config (only update the config keys that are present in the passed config)
+    """
+    for key in init_config:
+        if key in chat_config:
+            chat_config[key] = init_config[key]
 
 
 def get_document_dir_path(document_parent_dir_path=DOCUMENT_PARENT_DIR_PATH, document_dir_name=DOCUMENT_DIR_NAME):
@@ -51,13 +62,6 @@ tts_model = None
 global stt_model
 stt_model = None
 
-if tts_model is None:
-    print("[!] Creating TTS model beep beep boop...")
-    tts_model = create_tts_model(debug=True)
-
-if stt_model is None:
-    print("[!] Creating STT model beep beep boop...")
-    stt_model = create_stt_model(debug=True)
 
 """
 Controlller functions
@@ -86,8 +90,9 @@ def query():
     global qa_model
 
     if qa_model is None:
-        print("[!] Creating RAG model beep beep boop...")
-        qa_model = create_rag_model(debug=True)
+        print(
+            f"[!] Creating RAG model... Debug: {chat_config.get('debug', False)}")
+        qa_model = create_rag_model(debug=chat_config.get("debug", False))
 
     if document_src_name is None:
         raise ValueError("documentSrc is not set")
@@ -123,18 +128,19 @@ def query():
         print("[!] Vector store already loaded, skipping...")
 
     # Here should also pass the files too
-    answer = qa_model.query(
-        user_message, chat_history, chat_history_truncate_num=4, attached_file_paths=filepaths)
+    answer, image_paths = qa_model.query(
+        user_message, chat_history, attached_file_paths=filepaths)
 
     # If no error (hopefully), remove temp files, before returning answer
     for filepath in filepaths:
         os.remove(filepath)
         pass
 
-    return jsonify({
-        "success": True,
-        "data": {
-            'response': answer}})
+    return jsonify(
+        {"status": {
+            "code": 400},
+            "data": {
+            'response': answer, 'image_paths': image_paths}})
 
 
 def transferDocumentSrc():
@@ -180,12 +186,17 @@ def transferDocumentSrc():
         global qa_model
 
         if qa_model is None:
-            print("[!] Creating RAG model beep beep boop...")
-            qa_model = create_rag_model(debug=True)
+            print(
+                f"[!] Creating RAG model... Debug: {chat_config.get('debug', False)}")
+            qa_model = create_rag_model(debug=chat_config.get("debug", False))
 
         vector_store_path = os.path.join(
             VECTOR_STORE_PATH, f"{document_src_name}_{qa_model.embeddings.model_name}")
         shutil.rmtree(vector_store_path, ignore_errors=True)
+
+        # Force create new vector store
+        qa_model.load_vector_store(vector_store_path, [os.path.abspath(
+            file_path) for file_path in list_all_files(dir_name)])
 
         # Stonks
         print("[+] Document uploaded successfully")
@@ -212,6 +223,11 @@ def tts():
 
     # Create TTS model if none
     global tts_model
+
+    if tts_model is None:
+        print(
+            f"[!] Creating TTS model... Debug: {chat_config.get('debug', False)}")
+        tts_model = create_tts_model(debug=chat_config.get("debug", False))
 
     # TTS
     file_path = tts_model.tts(voice, TTS_MODEL_PATH, text)
@@ -242,6 +258,11 @@ def stt():
     # Create STT model if none
     global stt_model
 
+    if stt_model is None:
+        print(
+            f"[!] Creating STT model... Debug: {chat_config.get('debug', False)}")
+        stt_model = create_stt_model(debug=chat_config.get("debug", False))
+
     # STT
     text = stt_model.stt(audio)
 
@@ -249,3 +270,8 @@ def stt():
         "success": True,
         "data": {
             'response': text}})
+
+
+def post_query_image():
+    filename = request.form.get("filename")
+    return send_file(os.path.join(filename), as_attachment=True)

@@ -1,6 +1,9 @@
+from docx import Document as docx_Document
+import fitz
 import os
 
-from langchain_core.documents.base import Document
+import fitz  # PyMuPDF
+from langchain_core.documents import Document
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
 
 FILE_TYPES = {
@@ -101,54 +104,122 @@ FILE_TYPES = {
 }
 
 
-def load_documents(file_paths, describe_image_callback=None):
+def extract_images_from_pdf(pdf_path):
+    """Extract images from a PDF and return a list of (page_number, image_path)."""
+    doc = fitz.open(pdf_path)
+    base_dir = os.path.splitext(pdf_path)[0] + "_images"
+    os.makedirs(base_dir, exist_ok=True)
+    image_data = []
+
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        images = page.get_images(full=True)
+        for img_index, img in enumerate(images):
+            xref = img[0]
+            base_image = doc.extract_image(xref)
+            img_data = base_image["image"]
+            img_ext = base_image["ext"]
+            img_path = os.path.join(
+                base_dir, f"page_{page_num + 1}_img_{img_index + 1}.{img_ext}")
+            with open(img_path, "wb") as f:
+                f.write(img_data)
+            image_data.append((page_num + 1, img_path))
+
+    return image_data
+
+
+def extract_images_from_docx(docx_path):
+    """Extract images from a DOCX file with their order of appearance."""
+    document = docx_Document(docx_path)
+    base_dir = os.path.splitext(docx_path)[0] + "_images"
+    os.makedirs(base_dir, exist_ok=True)
+    image_data = []
+
+    for i, rel in enumerate(document.part.rels):
+        if "image" in document.part.rels[rel].target_ref:
+            img_path = os.path.join(base_dir, f"image_{i + 1}.png")
+            with open(img_path, "wb") as f:
+                f.write(document.part.rels[rel].target_part.blob)
+            image_data.append((i + 1, img_path))
+
+    return image_data
+
+
+def load_documents(file_paths, describe_image_callback=None, debug_print=False):
     """Load multiple documents from various formats into a single list of documents with metadata."""
-    documents = []
+    text_docs = []
 
     for file_path in file_paths:
         if not os.path.exists(file_path):
             print(f"❌ File not found: {file_path}")
             continue
         print(f"📄 Loading: {file_path}")
-        ext = os.path.splitext(file_path)[1].lower()  # Get file extension
-
-        # Remove '.' if it exists I'm not too sure either
-        ext = ext.replace('.', '')
+        ext = os.path.splitext(file_path)[1].lower().replace('.', '')
 
         file_type = FILE_TYPES.get(ext)
         loader = None
+        image_data = []
 
         if file_type == 'document':
             if ext == 'pdf':
                 loader = PyPDFLoader(file_path)
+                image_data = extract_images_from_pdf(file_path)
             elif ext == 'docx':
                 loader = Docx2txtLoader(file_path)
-            elif ext == 'txt' or ext in ['py', 'csv', 'json', 'xml', 'html', 'css', 'js', 'ts', 'c', 'cpp', 'h', 'hpp', 'java', 'kt', 'swift', 'rb', 'php', 'go', 'rs', 'pl', 'sh', 'bat', 'ps1', 'psm1', 'psd1', 'ps1xml', 'pssc', 'psc1']:
+                image_data = extract_images_from_docx(file_path)
+            elif ext in ['txt', 'py', 'csv', 'json', 'xml', 'html', 'css', 'js', 'ts', 'c', 'cpp', 'java', 'kt', 'swift']:
                 loader = TextLoader(file_path)
+
             if loader:
                 loaded_docs = loader.load()
                 for doc in loaded_docs:
-                    doc.metadata = {
-                        "file_name": os.path.basename(file_path),
-                        "file_path": file_path,
-                    }
-                    documents.append(doc)
+                    doc.metadata = {"file_name": os.path.basename(
+                        file_path), "file_path": file_path}
+                    text_docs.append(doc)
+
+            image_docs = []
+
+            for i, (order, img_path) in enumerate(image_data):
+                if debug_print:
+                    print(
+                        f"🖼️ Describing image progress: {i} / {len(image_data)}")
+                description = describe_image_callback(img_path)
+                image_doc = {
+                    "description": description["description"],
+                    "text": description["text"],
+                    "metadata": {"file_name": os.path.basename(img_path), "file_path": img_path, "source": "image"}
+                }
+                image_docs.append((order, image_doc))
+
+            # Link images to text by page/order
+            for order, image_doc in image_docs:
+                closest_text_doc = None
+                closest_distance = float("inf")
+
+                for text_doc in text_docs:
+                    text_page = text_doc.metadata.get("page", 0)
+                    if abs(text_page - order) < closest_distance:
+                        closest_distance = abs(text_page - order)
+                        closest_text_doc = text_doc
+
+                if closest_text_doc:
+                    if "linked_image" not in closest_text_doc.metadata:
+                        closest_text_doc.metadata["linked_image"] = []
+                    closest_text_doc.metadata["linked_image"].append(image_doc)
+
+            if debug_print:
+                print(
+                    f"🖼️ Created {len(image_docs)} images and {len(text_docs)} text Document objects")
         elif file_type == 'image':
             if describe_image_callback is not None:
                 description = describe_image_callback(file_path)
-                is_image = "text" in description and "description" in description
-                if is_image:
+                if "text" in description and "description" in description:
                     print(
-                        f"[?] Image file is under testing for support, weird things might happen: {ext}")
-                    doc = {}
-                    doc["description"] = description["description"]
-                    doc["text"] = description["text"]
-                    doc["metadata"] = {
-                        "file_name": os.path.basename(file_path),
-                        "file_path": file_path,
-                        "source": "image"
-                    }
-                    documents.append(doc)
+                        f"[?] Image file is under testing for support: {ext}")
+                    doc = Document(
+                        page_content=f"{description['text']}, {description['description']}",  metadata={
+                            "file_name": os.path.basename(file_path), "file_path": file_path, "source": "image"})
+                    text_docs.append(doc)
                 else:
                     print(f"❌ Unsupported image format: {ext}")
             else:
@@ -159,4 +230,4 @@ def load_documents(file_paths, describe_image_callback=None):
         else:
             print(f"❌ Unsupported file format: {ext}")
 
-    return documents
+    return text_docs

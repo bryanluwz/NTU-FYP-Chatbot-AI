@@ -1,62 +1,136 @@
 """
 This is the implementation of the RAG Chatbot model
 
-(Beta release)
-Known Issues:
-- EVERYTHING!!! fja;fladkl;faj;dfjasldfj
+Copyright: Bryan Lu We Zhern
+Just credit me fully for the original code that's all
 """
 
 import os
 import shutil
-from typing import List
+import numpy as np
+from PIL import Image
+import pytesseract
+import faiss
+from torch import cuda, device as torch_device, no_grad as torch_no_grad, OutOfMemoryError
+
+from langchain.text_splitter import CharacterTextSplitter
 from langchain_core.documents.base import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain.text_splitter import CharacterTextSplitter
-from transformers import pipeline
 
-from src.Base_AI_Model import BaseModel
+from rank_bm25 import BM25Okapi
+from sklearn.metrics.pairwise import cosine_similarity
+
+from transformers import pipeline
+from transformers.utils.logging import set_verbosity_error
 
 from .document_loader import load_documents
+from src.Base_AI_Model import BaseModel
 
-from PIL import Image
-
-from torch import cuda
-
-import pytesseract
+# Silence wench
+set_verbosity_error()  # Silence Hugging Face logs i think, maybe it's not even working
 
 
 class RAG_Model(BaseModel):
     def __init__(self, debug=False, device=None):
-        super().__init__(debug)
+        super().__init__(debug=debug)
         self.embeddings = None
         self.vector_store = None
         self.vector_store_path = None
 
         self.llm_pipeline = None
-        self.summarizer_pipeline = None
         self.blip_pipeline = None
 
-        self.document_reranker_pipeline = None
+        self.cross_encoder = None
 
+        self.debug = debug
         self.device = device or (1 if cuda.is_available() else 0)
 
-    def _convert_to_pipeline_inputs(self, messages: dict[str, str]):
+    def _convert_chat_history_to_pipeline_inputs(self, messages: dict[str, str], max_history_length: int = 3):
         """
-        Convert ChatMessageModel to pipeline inputs
+        Convert ChatMessageModel[] to pipeline inputs
         """
-        return_string_list = []
+        history_prompt = [{
+            "role": message["userType"],
+            "content": message["message"]
+        } for message in messages[-max_history_length:]]
 
-        for message in messages:
-            user_role = message['userType']
-            user_message = message['message']
-            return_string_list.append(f"{user_role}: {user_message}")
+        return history_prompt
 
-        return "\n".join(return_string_list)
+    def _describe_image(self, image_path: str):
+        """
+        Describe the image using the BLIP model. (and also OCR)
+        """
+        assert self.blip_pipeline is not None, "BLIP pipeline not initialized."
+
+        image = Image.open(image_path)
+
+        image_description = self.blip_pipeline(image)
+        image_description_text = image_description[0]['generated_text']
+
+        # Get OCR text
+        try:
+            ocr_text = pytesseract.image_to_string(image_path)
+        except Exception as e:
+            print(f"❌ OCR failed (-_-): {e}")
+            ocr_text = ""
+
+        return {"description": image_description_text, "text": ocr_text}
+
+    def _load_input_documents(self, file_paths: list[str]):
+        """
+        Load the input documents from the given file paths.
+        """
+        # Load document using PyPDFLoader
+        documents = load_documents(
+            file_paths,
+            describe_image_callback=self._describe_image,
+            debug_print=self.debug)
+
+        # Split document into chunks
+        text_splitter = CharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=30,
+            separator="\n"
+        )
+
+        files = text_splitter.split_documents(
+            [doc for doc in documents if doc.metadata and doc.metadata.get("source") != "image"])
+        images = [doc for doc in documents if doc.metadata and doc.metadata.get(
+            "source") == "image"]
+
+        docs = files + images
+
+        return docs
+
+    def _compute_text_similarity(self, text1: str, text2: str) -> float:
+        """
+        Compute cosine similarity between two text strings using embeddings.
+        """
+        assert self.embeddings is not None, "Embeddings model not initialized."
+
+        # Convert texts to embeddings
+        text1_embedding = self.embeddings.embed_query(text1)
+        text2_embedding = self.embeddings.embed_query(text2)
+
+        # Compute cosine similarity
+        similarity = cosine_similarity(
+            np.array(text1_embedding).reshape(1, -1),
+            np.array(text2_embedding).reshape(1, -1)
+        )[0][0]
+
+        return similarity
+
+    def _get_page_content(self, documents: list[Document]):
+        """
+        Strip metadata from the documents.
+        """
+        return [doc.page_content for doc in documents]
 
     def load_embeddings_model(self, model_name: str = "paraphrase-MiniLM-L6-v2", embedding_model_path: str = "embedding_models"):
         """Initialize HuggingFace embeddings."""
         # Check if the model already exists in the cache
+        # TODO: load faster without internet why?
         local_model_path = os.path.join(
             embedding_model_path, model_name)
 
@@ -64,7 +138,7 @@ class RAG_Model(BaseModel):
 
         # Load the embeddings model from the cache directory or download it
         self.embeddings = HuggingFaceEmbeddings(
-            model_name=model_name, show_progress=True, cache_folder=local_model_path)
+            model_name=model_name, show_progress=False, cache_folder=local_model_path)
 
     def load_vector_store(self, vector_store_path: str = "vector_store/<your_vector_store_name>", file_paths=[]):
         """Load the FAISS vector store if it exists."""
@@ -104,9 +178,9 @@ class RAG_Model(BaseModel):
         os.makedirs(vector_store_path, exist_ok=True)
 
         # Load document using PyPDFLoader
-        # TODO: Need to add support for images here that are in the documents
         documents = load_documents(
-            file_paths, describe_image_callback=self._describe_image)
+            file_paths, describe_image_callback=self._describe_image,
+            debug_print=self.debug)
 
         # Split document into chunks
         text_splitter = CharacterTextSplitter(
@@ -126,10 +200,9 @@ class RAG_Model(BaseModel):
         self.vector_store_path = vector_store_path
         self.vector_store = vectorstore
 
-    def initialize_llm(self, model_name: str = 'distilgpt2', max_new_tokens: int = 1024, temperature: float = 0.7, model_path: str = None, task: str = "text-generation"):
+    def initialize_llm(self, model_name: str = 'distilgpt2', max_new_tokens: int = 256, temperature: float = 0.6, model_path: str = None, task: str = "text-generation"):
         """
         Initialize the pipeline for text generation, and save/load the model.
-        Both the LLM and summarizer pipelines are the same.
         """
         model_save_path = os.path.join(model_path, model_name)
 
@@ -142,7 +215,8 @@ class RAG_Model(BaseModel):
                 tokenizer=model_save_path,
                 max_new_tokens=max_new_tokens,
                 framework="pt",
-                device_map="auto"
+                device_map="auto",
+                torch_dtype="auto"
             )
         else:
             # Get the model size before downloading
@@ -156,7 +230,8 @@ class RAG_Model(BaseModel):
                 max_new_tokens=max_new_tokens,
                 do_sample=True,
                 temperature=temperature,
-                device_map="auto"
+                device_map="auto",
+                torch_dtype="auto"
             )
 
             # Save the model and tokenizer
@@ -166,8 +241,6 @@ class RAG_Model(BaseModel):
 
         self.llm_pipeline = text_gen_pipeline
 
-        self.summarizer_pipeline = text_gen_pipeline
-
     def initialize_blip(self, model_name: str = 'Salesforce/blip-image-captioning-base', model_path: str = None, task: str = "image-to-text"):
         """
         Initialize the BLIP pipeline for image and text encoding.
@@ -176,37 +249,37 @@ class RAG_Model(BaseModel):
 
         # Check if the model is already saved
         # `device` cannot be set to 'auto' for BLIP, so we need to specify the device manually, if GPU cannot be used, fall back to CPU
+        print(f"🔄 Loading BLIP model from {model_save_path}...")
+
         if os.path.exists(model_save_path):
             try:
                 print(f"🔄 Loading BLIP model from {model_save_path}...")
-                blip_pipeline = pipeline(
+                self.blip_pipeline = pipeline(
                     task=task,
                     model=model_save_path,
                     tokenizer=model_save_path,
                     framework="pt",
-                    device=self.device  # Use self.device to specify the device
+                    device=self.device
                 )
-
             except RuntimeError as e:
                 if "CUDA error: invalid device ordinal" in str(e):
                     print(
                         "⚠️ Idk there's some weird GPU device behaviour. Falling back to CPU.")
-                    self.device = -1  # Use CPU
-                    blip_pipeline = pipeline(
+                    self.blip_pipeline = pipeline(
                         task=task,
                         model=model_save_path,
                         tokenizer=model_save_path,
                         framework="pt",
-                        device=self.device  # Use CPU
+                        device=-1  # Use CPU
                     )
                 else:
                     raise e
         else:
-            # Get the model size before downloading
             print(
                 f"⬇️ Downloading and saving BLIP model '{model_name}' to {model_save_path}...")
+
             try:
-                blip_pipeline = pipeline(
+                self.blip_pipeline = pipeline(
                     task=task,
                     model=model_name,
                     tokenizer=model_name,
@@ -217,22 +290,19 @@ class RAG_Model(BaseModel):
                 if "CUDA error: invalid device ordinal" in str(e):
                     print(
                         "⚠️ Idk there's some weird GPU device behaviour. Falling back to CPU.")
-                    self.device = -1  # Use CPU
-                    blip_pipeline = pipeline(
+                    self.blip_pipeline = pipeline(
                         task=task,
                         model=model_name,
                         tokenizer=model_name,
                         framework="pt",
-                        device=self.device  # Use CPU
+                        device=-1  # Use CPU
                     )
                 else:
                     raise e
 
             # Save the model
-            blip_pipeline.save_pretrained(model_save_path)
+            self.blip_pipeline.save_pretrained(model_save_path)
             print(f"✅ BLIP model '{model_name}' saved to {model_save_path}.")
-
-        self.blip_pipeline = blip_pipeline
 
     def initialize_cross_encoder(self, model_name: str = 'cross-encoder/ms-marco-MiniLM-L-6-v2', model_path: str = None):
         """
@@ -263,102 +333,311 @@ class RAG_Model(BaseModel):
             print(
                 f"✅ Cross-encoder model '{model_name}' saved to {model_save_path}.")
 
-        self.document_reranker_pipeline = reranker_pipeline
+        self.cross_encoder = reranker_pipeline
 
-    def _normalize_scores(self, scores: List[float]) -> List[float]:
+    def _preretrieval_query_formatting(self, query: str):
         """
-        Normalize the scores to a range of 0 to 1.
+        Preretrieval
         """
-        min_score = min(scores)
-        max_score = max(scores)
+        assert self.llm_pipeline is not None, "LLM pipeline not initialized."
+        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
 
-        return [(score - min_score) / (max_score - min_score) for score in scores]
-
-    def _rerank_documents(self, documents: list[Document], query: str, top_k=2, score_threshold=0.5):
-        """
-        Rerank the documents based on the relevance to the query.
-        """
-        assert self.document_reranker_pipeline is not None, "Cross-encoder model not initialized."
-
-        # Prepare query-document pairs
-        query_doc_pairs = [{"text": query, "text_pair": doc.page_content}
-                           for doc in documents]
-
-        # Get relevance scores
-        scores = self.document_reranker_pipeline(
-            query_doc_pairs)
-
-        scores = self._normalize_scores([score["score"] for score in scores])
-
-        # Combine scores with documents and sort by score, highest first
-        scored_docs = [(doc, score)
-                       for doc, score in zip(documents, scores) if score > score_threshold]
+        self._debug_print("[!] Pre-retrieval - Query reformulating...")
 
         self._debug_print(
-            f"Scored documents: {[score for score in scores]}")
+            "[!] Pre-retrieval - Loading attached files and chat history...")
 
-        reranked_docs = sorted(scored_docs, key=lambda x: x[1], reverse=True)
-        return [doc for doc, _ in reranked_docs][:top_k]
-
-    def _describe_images(self, image_paths: list[str]):
-        """
-        Describe the image using the BLIP model. (and also OCR)
-        """
-        assert self.blip_pipeline is not None, "BLIP pipeline not initialized."
-
-        descs = []
-
-        for image_path in image_paths:
-            image_desc, ocr_text = self._describe_image(image_path)
-            descs.append({'description': image_desc, 'ocr_text': ocr_text})
-
-        return descs
-
-    def _describe_image(self, image_path: str):
-        """
-        Describe the image using the BLIP model. (and also OCR)
-        """
-        assert self.blip_pipeline is not None, "BLIP pipeline not initialized."
-
-        image = Image.open(image_path)
-
-        # Get description
-        image_description = self.blip_pipeline(image)
-        image_description_text = image_description[0]['generated_text']
-
-        # Get OCR text
-        try:
-            ocr_text = pytesseract.image_to_string(image_path)
-        except Exception as e:
-            print(f"❌ OCR failed (-_-): {e}")
-            ocr_text = ""
-
-        return {"description": image_description_text, "text": ocr_text}
-
-    def _load_input_documents(self, file_paths: list[str]):
-        """
-        Load the input documents from the given file paths.
-        """
-        # Load document using PyPDFLoader
-        documents = load_documents(
-            file_paths, describe_image_callback=self._describe_image)
-
-        # Split document into chunks
-        text_splitter = CharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=30,
-            separator="\n"
+        self._debug_print(
+            f"[!] Pre-retrieval - Querying LLM for input reformulation: {query}"
         )
 
-        files = text_splitter.split_documents(
-            [doc for doc in documents if "metadata" not in doc and doc.metadata.get("source") != "image"])
-        images = [
-            doc for doc in documents if "metadata" in doc and doc["metadata"]["source"] == "image"]
-        docs = files + images
+        # System prompt for LLM for query reformulation / expansion / whatever you call it
+        system_prompt = (
+            "You are a teaching assistant at Nanyang Technological University in Singapore. "
+            "You have a vast knowledge of the course material. "
+            "You are tasked to reformulate the user's query to generate five similar words and phrases"
+            "\n"
+            "DO NOT answer the question, but ensure the reformulated query is relevant to the user's question. "
+            "ONLY return the related words and synonyms, without additional text. "
+        )
+
+        final_prompt = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Help me generate five similar words and phrases for: {query}"}
+        ]
+
+        reformulated_user_query = self.llm_pipeline(final_prompt)[
+            0]['generated_text'][-1]['content']
+
+        self._debug_print(
+            f"[!] Pre-retrieval - Reformulated \n{query}\n    to\n{reformulated_user_query}")
+
+        return reformulated_user_query
+
+    def _retrieval(self, query: str):
+        """
+        Retrieval and post-retrieval processing.
+        """
+        assert self.vector_store is not None, "Vector store not initialized."
+        assert self.llm_pipeline is not None, "LLM pipeline not initialized."
+        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
+
+        self._debug_print(
+            "[!] Retrieval - Searching, filtering and ranking for relevant documents...")
+
+        # Pass context to the vector store for retrieval
+        # k = 20 for sparse retrieval, then passed to filtering for better retreival
+        context = self.vector_store.similarity_search(query, k=20)
+        filtered_context = self._filter_and_rerank_context(context, query)
+
+        return filtered_context
+
+    def _filter_and_rerank_context(self, context: list[Document], query: str, num_return=3):
+        """
+        Use BM25, dense retrieval, and cross-encoder reranking to filter and rank relevant documents.
+        """
+        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
+
+        if not context:
+            return []
+
+        self._debug_print(
+            f"[!] Filter and Rerank - Processing {len(context)} document(s)...")
+
+        # Extract document text
+        documents = [doc.page_content for doc in context]
+
+        # ---- STEP 1: BM25 Retrieval ----
+        tokenized_docs = [doc.split() for doc in documents]
+        bm25 = BM25Okapi(tokenized_docs)
+        bm25_scores = bm25.get_scores(query.split())
+
+        # Get top-k BM25 docs
+        bm25_top_k = 10  # Adjust this if needed
+        bm25_top_indices = np.argsort(bm25_scores)[::-1][:bm25_top_k]
+        bm25_top_docs = [context[i] for i in bm25_top_indices]
+
+        # ---- STEP 2: Dense Retrieval (FAISS) ----
+        doc_embeddings = np.array(
+            [self.embeddings.embed_query(doc.page_content) for doc in context])
+        dimension = doc_embeddings.shape[1]
+        faiss_index = faiss.IndexFlatIP(dimension)
+        faiss_index.add(doc_embeddings)
+
+        query_embedding = self.embeddings.embed_query(query)
+
+        # Retrieve top-k dense matches
+        dense_top_k = 10  # Adjust as needed
+        _, indices = faiss_index.search(
+            np.array([query_embedding]), dense_top_k)
+        dense_top_docs = [context[i] for i in indices[0]]
+
+        # ---- STEP 3: Merge & Deduplicate BM25 + Dense Results ----
+        merged_docs = {
+            doc.page_content: doc for doc in bm25_top_docs + dense_top_docs}.values()
+        merged_docs = list(merged_docs)  # Remove duplicates
+
+        self._debug_print(
+            f"[!] Hybrid retrieval - Retrieved {len(merged_docs)} unique document(s) from BM25 & Dense retrieval."
+        )
+
+        # Compute scores again only for the merged set
+        bm25_scores = np.array([bm25.get_scores(doc.page_content.split())[
+                               0] for doc in merged_docs])
+        dense_scores = np.array([faiss_index.search(np.array(
+            [self.embeddings.embed_query(doc.page_content)]), 1)[0][0][0] for doc in merged_docs])
+
+        # ---- STEP 4: Hybrid Scoring (BM25 + Dense) ----
+        bm25_scores = (bm25_scores - bm25_scores.min()) / \
+            (bm25_scores.max() - bm25_scores.min() + 1e-8)
+        dense_scores = (dense_scores - dense_scores.min()) / \
+            (dense_scores.max() - dense_scores.min() + 1e-8)
+
+        final_scores = 0.5 * bm25_scores + 0.5 * dense_scores
+        sorted_indices = np.argsort(final_scores)[::-1]  # Sort descending
+
+        # Get top-ranked docs based on hybrid retrieval
+        hybrid_top_docs = [merged_docs[i] for i in sorted_indices]
+
+        self._debug_print(
+            f"[!] Hybrid retrieval - Selected {len(hybrid_top_docs)} document(s) for reranking."
+        )
+
+        # ---- STEP 5: Cross-Encoder Reranking ----
+        query_doc_pairs = [{"text": self._truncate_text(
+            query, 256), "text_pair": self._truncate_text(doc.page_content, 256)} for doc in hybrid_top_docs]
+        scores = self.cross_encoder.predict(query_doc_pairs)
+
+        # Filter based on LLM relevance threshold
+        sorted_docs = sorted(
+            list(zip(hybrid_top_docs, scores)), key=lambda x: x[1]['score'], reverse=True)[:num_return]
+
+        docs = [doc[0] for doc in sorted_docs]
+
+        self._debug_print(
+            f"[!] Final Filtering - {len(sorted_docs)} document(s) passed the threshold."
+        )
 
         return docs
 
-    def query(self, query: str, chat_history: list[any], chat_history_truncate_num=5, search_k=10, top_k=2, attached_file_paths=[]):
+    def _rank_relevant_images(self, images: list[dict], generated_response: str):
+        """
+        Rank relevant images based on the generated response and images description + text
+        Only with cross encoder
+        """
+        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
+
+        for image in images:
+            image["content"] = image["description"] + " " + image["text"]
+            del image["description"]
+            del image["text"]
+
+        query_image_pairs = [{"text": self._truncate_text(
+            generated_response, 256), "text_pair": self._truncate_text(image["content"], 256)} for image in images]
+
+        scores = self.cross_encoder.predict(query_image_pairs)
+
+        sorted_images = sorted(
+            list(zip(images, scores)), key=lambda x: x[1]['score'], reverse=True)
+
+        return sorted_images
+
+    def _truncate_text(self, text: str, max_tokens: int = 512):
+        """
+        Truncate text to the maximum number of tokens.
+        """
+        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
+        tokens = self.cross_encoder.tokenizer.encode(
+            text, truncation=True, max_length=max_tokens)
+        return self.cross_encoder.tokenizer.decode(tokens)
+
+    def _generation(self, query: str, context, attached_file_paths: list[str], chat_history: list[any] = []):
+        """
+        Generation and post-generation processing.
+        """
+        assert self.llm_pipeline is not None, "LLM pipeline not initialized."
+
+        self._debug_print(
+            f'[!] Generation - Generating response for: \n{query}\nwith {len(context)} context document(s) and {len(attached_file_paths)} attached file(s).')
+
+        # 1. Check for linked images in context docs
+        relevant_images = []
+
+        for doc in context:
+            if "linked_image" in doc.metadata:
+                if len(attached_file_paths) > 0:
+                    self._debug_print(
+                        "[!] Generation - Attached files are present, ignoring linked images.")
+                    # Remove linked images from context if attached files are present
+                    # i.e. ignore linked images if attached files are present
+                    del doc.metadata["linked_image"]
+                    continue
+
+                image_dict_list = doc.metadata["linked_image"]
+
+                for image_dict in image_dict_list:
+                    image_description = image_dict["description"]
+                    image_text = image_dict["text"]
+                    image_path = image_dict["metadata"]["file_path"]
+
+                    # 1.1. Compute relevance (vector similarity or keyword match)
+                    similarity_score = self._compute_text_similarity(
+                        query, image_description + " " + image_text)
+                    # self._debug_print(
+                    #     f"[!] Generation - Similarity score for '{image_description}': {similarity_score:.3f}")
+
+                    # Adjust threshold as needed
+                    if similarity_score > 0.3 and not any([img["metadata"]["file_path"] == image_path for img in relevant_images]):
+                        self._debug_print(
+                            f"[!] Generation - Relevant image found (i think): {image_path}")
+                        relevant_images.append({
+                            "description": image_description,
+                            "text": image_text,
+                            "metadata": {
+                                "file_path": image_path
+                            }
+                        })
+
+                del doc.metadata["linked_image"]
+
+        # 2. Load attached files and images
+        attached_files_docs = self._load_input_documents(attached_file_paths)
+        attached_images = [
+            doc for doc in attached_files_docs if doc.metadata and doc.metadata.get("source") == "image"]
+        attached_files_docs_without_images = [
+            doc for doc in attached_files_docs if doc.metadata and doc.metadata.get("source") != "image"]
+
+        context = self._get_page_content(context)
+
+        # 3. Prompties
+        system_prompt = (
+            "You are a teaching assistant at Nanyang Technological University in Singapore. "
+            "You have a vast knowledge of the course material. "
+            "You are tasked to provide a short and concise answer to the user's question. With at most 3 sentences. "
+            "Never provide a long answer, otherwise, it will not be helpful. "
+            "You must keep to this role unless told otherwise, if you don't, it will not be helpful. "
+            "Answer as if you are a human manner, without revealing you are a chatbot. "
+            "\n"
+            "Teaching Assistant Guidelines: "
+            "1. Either provide a direct answer or ask for clarification. "
+            "2. Do not hallucinate. Do not make up factual information. "
+            "3. Use the provided context necessarily to generate a relevant answer, without making up information, but also make sure that it is coherent. "
+            "4. Use markdown formatting only when necessary. "
+            "5. DO NOT generate a long response. Only provide a short and concise answer. "
+        )
+
+        # 3.1. Append stuffs
+        messages = [{"role": "system", "content": system_prompt}]
+
+        if chat_history:
+            messages.append(
+                {"role": "user", "content": f"Chat History: {self._convert_chat_history_to_pipeline_inputs(chat_history[-3:])}"})
+
+        if context:
+            context_str = '\n'.join(context)
+            messages.append(
+                {"role": "user", "content": f"Context: {context_str}"})
+
+        user_message = ""
+        if attached_files_docs_without_images:
+            attached_content = self._get_page_content(
+                attached_files_docs_without_images)
+            attached_content = [
+                f"**File {i+1}.** {content}" for i, content in enumerate(attached_content)]
+            user_message += f"Refer to these attached files: {attached_content}\n"
+
+        if attached_images:
+            attached_content = self._get_page_content(attached_images)
+            attached_content = [
+                f"**Image {i+1}.** {content}" for i, content in enumerate(attached_content)]
+            user_message += f"Refer to these attached images: {attached_content}\n"
+
+        messages.append(
+            {"role": "user", "content": user_message + f"Answer in a concise manner, The user input is '{query}'"})
+
+        # 3.2. Generate response
+        response: str = self.llm_pipeline(
+            messages, eos_token_id=self.llm_pipeline.tokenizer.eos_token_id
+        )[0]['generated_text'][-1]['content']
+
+        self._debug_print(f"[!] Generation - Response: {response}")
+
+        # 4. Rank relevant images based on the generated response
+        scored_relevant_images = self._rank_relevant_images(
+            relevant_images, response)
+        filtered_images = []
+        for img, score in scored_relevant_images:
+            # Adjust threshold as needed
+            if score['score'] > 0.3:
+                filtered_images.append(img)
+
+        if filtered_images:
+            self._debug_print(
+                f"[!] Generation - Found {len(filtered_images)} relevant image(s) based on the generated response.")
+
+        return response, [img["metadata"]["file_path"] for img in filtered_images] if filtered_images else []
+
+    def query(self, query: str, chat_history: list[any], attached_file_paths=[]):
         """
         Query the QA chain with the given input.
 
@@ -368,103 +647,28 @@ class RAG_Model(BaseModel):
         """
         assert self.vector_store is not None, "Vector store not initialized."
         assert self.llm_pipeline is not None, "LLM pipeline not initialized."
-        assert self.summarizer_pipeline is not None, "Summarizer pipeline not initialized."
-        assert self.document_reranker_pipeline is not None, "Cross-encoder model not initialized."
-
-        # Get reformulated query based on chat history and user query
-        truncated_chat_history = chat_history[-chat_history_truncate_num:]
+        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
 
         self._debug_print("Querying the QA chain...")
 
-        contextualize_q_system_prompt = (
-            "As a friendly university teaching assistant, your task is to "
-            "given a chat history and the latest user question "
-            "rephrase the question as a standalone question understandable by an LLM including relevant context"
-            "1. Do NOT add new information, make assumptions, or create your own questions. "
-            "2. If rephrasing is not possible without assumptions, return the question exactly as it is."
-            "3. Do NOT answer the question. Just rephrase it."
-            "4. Do NOT change the meaning or context of the question."
-            "5. Chat history should only be used to provide additional context for the question, but maybe not be necessary."
-        )
+        # Call all the functions in order
+        retrieved_context = None
+        if len(attached_file_paths) == 0:
+            reformulated_query = self._preretrieval_query_formatting(
+                query)
+            retrieved_context = self._retrieval(reformulated_query)
+        else:
+            self._debug_print(
+                f"[!] Query - Attached files are present, ignoring RAG model...")
 
-        reformulated_query = self.summarizer_pipeline(
-            [
-                {"role": "system", "content": contextualize_q_system_prompt},
-                {"role": "system",
-                    "content": f"Chat history: {self._convert_chat_history_to_string(truncated_chat_history)}"},
-                {"role": "human", "content": f"User question: {query}"}
-            ]
-        )[0]['generated_text'][-1]
+        # TEMP: Chat history disable except first message
+        if chat_history:
+            if chat_history[0] != chat_history[-1]:
+                chat_history = [chat_history[0], chat_history[-1]]
+            else:
+                chat_history = [chat_history[0]]
 
-        self._debug_print(f"Reformulated query: {reformulated_query}")
+        generated_response = self._generation(
+            query=query, context=retrieved_context or [], attached_file_paths=attached_file_paths, chat_history=chat_history)
 
-        # TODO: Just check if the reformulated query needs context or not
-        # Get Context based on reformulated query
-        context: List[Document] = self.vector_store.similarity_search(
-            reformulated_query["content"], k=search_k)
-
-        # Rank documents based on usefulness via Cross Encoder
-        try:
-            context_ranked = self._rerank_documents(
-                context, reformulated_query["content"], top_k=top_k)
-        except:
-            try:
-                context_ranked = self._rerank_documents(
-                    context, query, top_k=top_k)
-            except:
-                context_ranked = context
-
-        # Load the attached files (and images)
-        attached_files_docs = self._load_input_documents(attached_file_paths)
-
-        # Rank attached files based on usefulness via Cross Encoder, except for images (metadata.source == "image")
-        attached_images = [
-            doc for doc in attached_files_docs if "metadata" in doc and doc["metadata"]["source"] == "image"]
-        attached_files_docs_without_images = [
-            doc for doc in attached_files_docs if "metadata" not in doc and doc.metadata.get("source") != "image"]
-
-        try:
-            attached_files_ranked = self._rerank_documents(
-                attached_files_docs_without_images, reformulated_query["content"], top_k=top_k)
-        except:
-            try:
-                attached_files_ranked = self._rerank_documents(
-                    attached_files_docs_without_images, query, top_k=top_k)
-            except:
-                attached_files_ranked = attached_files_docs
-
-        # Restructure the final prompt passed into LLM
-        # TODO: Add conversation history to the prompt (if needed, and if so, how much past history?)
-        system_prompt = f"""
-You are a knowledgeable and professional Teaching Assistant Chatbot at a university with perfect grammar.
-Always use the given context unless it is irrelevant to the question. Give concise answers using at most three sentences.
-Always provide answers that are concise, accurate, and confidently stated, without referencing the source document or context explicitly.
-
-1. Always explain information clearly and assertively. Avoid tentative or overly speculative language.
-2. If there is insufficient context, summarise what is available and politely ask for more specific details, avoiding mention of a missing document or guide.
-3. For general questions without specific context, provide direct and accurate answers using your knowledge.
-4. For casual conversations, maintain a warm and professional tone, responding appropriately to greetings and social dialogue.
-5. Format all responses in markdown when necessary to ensure clarity and proper presentation.
-6. If no relevant answer can be provided, respond with a friendly greeting or ask for clarification.
-
-Context: {context_ranked} 
-{ f'Refer to the following user files: {attached_files_ranked}' if len(attached_files_ranked) > 0 else ''}
-{ f'Refer to the following user images: {[{"description": image["description"], "text": image["text"]} for image in attached_images]}' if len(attached_images) > 0 else ''}
-""".replace("\n", " ")
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "human", "content": query}
-        ]
-
-        self._debug_print(f"Query Message: {messages}")
-
-        output = self.llm_pipeline(
-            messages
-        )[0]['generated_text'][-1]
-
-        self._debug_print(f"Generated answer: {output}")
-
-        self._debug_print("Query complete.")
-
-        return output["content"]
+        return generated_response

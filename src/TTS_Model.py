@@ -6,6 +6,7 @@ import uuid
 from dotenv import dotenv_values
 import os
 from torch.cuda import is_available as is_cuda_available
+from torch import OutOfMemoryError
 from transformers import pipeline
 from kokoro import KPipeline
 import soundfile as sf
@@ -37,12 +38,12 @@ class TTS_Model_Map:
 
 
 class TTS_Model(BaseModel):
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, device=None):
         super().__init__(debug)
         self.tts_pipelines = {}
         self.active_tts_pipeline = None
 
-        self.device = 'cuda' if is_cuda_available() else 'cpu'
+        self.device = device or 'cuda' if is_cuda_available() else 'cpu'
 
     def initialise_tts(self, model_name: str, model_path: str = None, task: str = 'text-to-speech'):
         """
@@ -77,7 +78,7 @@ class TTS_Model(BaseModel):
             model_name).split('?')[-1] or 'af_heart'
         lang_code = voice[0]
         self.tts_pipelines[model_name] = KPipeline(
-            lang_code=lang_code)
+            lang_code=lang_code, device=self.device)
 
     def initialise_normal_tts(self, model_name: str, model_path: str = None, task: str = 'text-to-speech'):
         """
@@ -129,28 +130,42 @@ class TTS_Model(BaseModel):
 
         self.active_tts_pipeline = self.tts_pipelines[tts_name]
 
-        if "hexgrad/Kokoro-82M" in TTS_Model_Map.get_model(tts_name):
-            voice = TTS_Model_Map.get_model(
-                tts_name).split('?')[-1]
+        try:
+            if "hexgrad/Kokoro-82M" in TTS_Model_Map.get_model(tts_name):
+                voice = TTS_Model_Map.get_model(
+                    tts_name).split('?')[-1]
 
-            final_audio = []
-            for _, _, audio in self.active_tts_pipeline(text, voice=voice):
-                # Assume that there is only one audio output in this weired for loop
-                final_audio += audio
+                final_audio = []
+                for _, _, audio in self.active_tts_pipeline(text, voice=voice):
+                    # Assume that there is only one audio output in this weired for loop
+                    final_audio += audio
 
-            self._debug_print(f"✅ Text-to-Speech completed.")
-            file_path = self._tts_output_to_file(
-                final_audio, 24000, file_name=f"{tts_name}_tts_output")
+                self._debug_print(f"✅ Text-to-Speech completed.")
+                file_path = self._tts_output_to_file(
+                    final_audio, 24000, file_name=f"{tts_name}_tts_output")
 
-        else:
-            audio = self.active_tts_pipeline(text)
+            else:
+                audio = self.active_tts_pipeline(text)
 
-            self._debug_print(f"✅ Text-to-Speech completed.")
+                self._debug_print(f"✅ Text-to-Speech completed.")
 
-            audio_array = np.array(audio["audio"]).squeeze()
-            sampling_rate = audio['sampling_rate']
-            file_path = self._tts_output_to_file(
-                audio_array, sampling_rate, file_name=f"{tts_name}_tts_output")
+                audio_array = np.array(audio["audio"]).squeeze()
+                sampling_rate = audio['sampling_rate']
+                file_path = self._tts_output_to_file(
+                    audio_array, sampling_rate, file_name=f"{tts_name}_tts_output")
+
+        except OutOfMemoryError:
+            if self.device == 'cpu':
+                self._debug_print(
+                    f"❌ Out of memory error. Unable to use CPU.")
+                return None
+
+            self._debug_print(
+                f"❌ Out of memory error. Attempting to use CPU...")
+            self.device = 'cpu'
+            self.initialise_tts(tts_name, tts_model_path, 'text-to-speech')
+            # Should not be recursive .... right?
+            file_path = self.tts(tts_name, tts_model_path, text)
 
         return file_path
 
