@@ -43,6 +43,8 @@ Key features of the AI server include:
    source ./venv/bin/activate
    ```
 
+   <!-- TODO: Change to using conda -->
+
    ```bash
    pip install -r requirements.txt
    ```

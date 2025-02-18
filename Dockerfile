@@ -1,11 +1,21 @@
-FROM python:3.10
+FROM continuumio/miniconda3
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Copy the environment.yml into the container
+COPY environment.yml /app/
+
+# Create the Conda environment
+RUN conda env create -f environment.yml
+
+# Activate the environment
+SHELL ["conda", "run", "-n", "myenv", "/bin/bash", "-c"]
+
+# Install any additional dependencies or final setups
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Copy your application code
+COPY . /app/
 
-EXPOSE 3001
-CMD ["python", "./app.py"]
+# Set the default command
+CMD ["python", "app.py"]
