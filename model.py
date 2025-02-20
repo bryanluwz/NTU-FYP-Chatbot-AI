@@ -19,7 +19,8 @@ if torch.cuda.is_available():
 # Config
 config = dotenv_values(".env")
 
-LLM_MODEL_NAME = 'meta-llama/Llama-3.2-1B-Instruct'
+LLM_MODEL_NAME = os.getenv(
+    "LLM_MODEL", "meta-llama/Llama-3.2-1B-Instruct")  # Default if not set
 BLIP_MODEL_NAME = 'Salesforce/blip-image-captioning-base'
 CROSS_ENCODER_NAME = 'cross-encoder/ms-marco-MiniLM-L-12-v2'
 LLM_TASK = 'text-generation'

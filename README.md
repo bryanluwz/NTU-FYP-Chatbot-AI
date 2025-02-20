@@ -65,7 +65,19 @@ Key features of the AI server include:
 
    Don't know how? Too bad, figure it out yourself!
 
-4. Run the AI server:
+4. Create a Huggingface Token and set it in the `.env` file:
+
+   Create a Huggingface account and generate a token from the Huggingface website. Set the token in the `.env` file, make sure that your huggingface token is kept secret, and is allowed to access the required / desired models. E.g. `meta-llama/Llama-3.2-1B-Instruct` is used in this project, but requires a token to access.
+
+   You may change the model to any other model you have access to, but make sure to update the code accordingly. This can be done by changing the `LLM_MODEL_NAME` in the `model.py` file.
+
+   If you are using Docker, you can set the environment variable in the `docker-compose.yml` file. See [Docker Setup](../README.md#running-the-project-with-docker)
+
+   ```env
+   HUGGINGFACE_TOKEN=<your_huggingface_token_here>
+   ```
+
+5. Run the AI server:
 
    ```bash
    python ./app.py
@@ -73,7 +85,7 @@ Key features of the AI server include:
    python ./app.py --debug
    ```
 
-5. The AI server should now be running on `https://localhost:3001` or whatever port you specified in the `.env` file.
+6. The AI server should now be running on `https://localhost:3001` or whatever port you specified in the `.env` file.
 
 ## License
 
