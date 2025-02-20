@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 import pytesseract
 import faiss
-from torch import cuda, device as torch_device, no_grad as torch_no_grad, OutOfMemoryError
+from torch import cuda
 
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_core.documents.base import Document

@@ -1,21 +1,24 @@
-FROM continuumio/miniconda3
+# Build shit
+FROM python:3.10-slim-buster AS builder
 
 WORKDIR /app
 
-# Copy the environment.yml into the container
-COPY environment.yml /app/
+# Copy only requirements first to leverage caching
+COPY requirements.txt /app/
 
-# Create the Conda environment
-RUN conda env create -f environment.yml
+# Install dependencies and keep pip cache persistent
+RUN pip install --prefer-binary --no-cache-dir -r requirements.txt
 
-# Activate the environment
-SHELL ["conda", "run", "-n", "myenv", "/bin/bash", "-c"]
+# Final leftover shit
+FROM python:3.10-slim-buster
 
-# Install any additional dependencies or final setups
-RUN pip install --no-cache-dir -r requirements.txt
+WORKDIR /app
 
-# Copy your application code
+# Copy installed dependencies from builder
+COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy the rest of the app
 COPY . /app/
 
-# Set the default command
 CMD ["python", "app.py"]
