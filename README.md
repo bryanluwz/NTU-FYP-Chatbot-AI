@@ -2,6 +2,10 @@
 
 This repository contains the AI server implementation for the NTU Final Year Project (FYP) Chatbot. This AI server is built using Python and Flask for processing chatbot logic. This AI server powers the chatbot's core functionalities, providing a seamless and intelligent user experience.
 
+## Warning
+
+I might have messed up some of the code trying to get the Docker setup to work. If you encounter any issues, please let me know and I will not fix it, because I'm done with this project.
+
 ## Features
 
 Key features of the AI server include:
@@ -43,7 +47,7 @@ Key features of the AI server include:
    source ./venv/bin/activate
    ```
 
-   <!-- TODO: Change to using conda -->
+   You can also use `conda` if you prefer. But I won't provide instructions for that. 😛
 
    ```bash
    pip install -r requirements.txt
@@ -69,7 +73,7 @@ Key features of the AI server include:
    python ./app.py --debug
    ```
 
-5. The AI server should now be running on `https://localhost:5000`.
+5. The AI server should now be running on `https://localhost:3001` or whatever port you specified in the `.env` file.
 
 ## License
 

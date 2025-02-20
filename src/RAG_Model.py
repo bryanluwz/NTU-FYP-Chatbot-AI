@@ -32,7 +32,7 @@ set_verbosity_error()  # Silence Hugging Face logs i think, maybe it's not even 
 
 
 class RAG_Model(BaseModel):
-    def __init__(self, debug=False, device=None):
+    def __init__(self, debug=False, device=None, huggingface_token=None):
         super().__init__(debug=debug)
         self.embeddings = None
         self.vector_store = None
@@ -45,6 +45,7 @@ class RAG_Model(BaseModel):
 
         self.debug = debug
         self.device = device or (1 if cuda.is_available() else 0)
+        self.huggingface_token = huggingface_token
 
     def _convert_chat_history_to_pipeline_inputs(self, messages: dict[str, str], max_history_length: int = 3):
         """
@@ -214,6 +215,7 @@ class RAG_Model(BaseModel):
                 model=model_save_path,
                 tokenizer=model_save_path,
                 max_new_tokens=max_new_tokens,
+                do_sample=True,
                 framework="pt",
                 device_map="auto",
                 torch_dtype="auto"
@@ -226,12 +228,13 @@ class RAG_Model(BaseModel):
                 task=task,
                 model=model_name,
                 tokenizer=model_name,
+                do_sample=True,
                 framework="pt",
                 max_new_tokens=max_new_tokens,
-                do_sample=True,
                 temperature=temperature,
                 device_map="auto",
-                torch_dtype="auto"
+                torch_dtype="auto",
+                token=self.huggingface_token
             )
 
             # Save the model and tokenizer

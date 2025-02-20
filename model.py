@@ -59,8 +59,18 @@ DOCUMENT_DIR_NAME = None
 os.makedirs(DOCUMENT_PARENT_DIR_PATH, exist_ok=True)
 
 
+HUGGINGFACE_TOKEN = None
+if os.path.exists("/run/secrets/hf_token"):
+    with open("/run/secrets/hf_token") as f:
+        print("[+] Found Huggingface token in secrets: /run/secrets/hf_token")
+        HUGGINGFACE_TOKEN = f.read().strip()
+else:
+    print("[!] Huggingface token not found in secrets: /run/secrets/hf_token")
+    HUGGINGFACE_TOKEN = config.get('HUGGINGFACE_TOKEN', None)
+
+
 def create_rag_model(debug=False):
-    qa_model = RAG_Model(debug=debug)
+    qa_model = RAG_Model(debug=debug, huggingface_token=HUGGINGFACE_TOKEN)
     qa_model.load_embeddings_model(EMBEDDING_NAME, EMBEDDING_MODEL_PATH)
     qa_model.initialize_cross_encoder(
         model_name=CROSS_ENCODER_NAME, model_path=CROSS_ENCODER_MODEL_PATH)

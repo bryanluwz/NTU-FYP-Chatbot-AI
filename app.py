@@ -8,7 +8,6 @@ from dotenv import dotenv_values
 
 config = dotenv_values(".env")
 port_number = config.get('PORT', 5000)
-backend_port_number = config.get('BACKEND_PORT', 3000)
 
 
 # App stuff
