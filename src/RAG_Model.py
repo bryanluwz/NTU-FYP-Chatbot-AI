@@ -138,8 +138,9 @@ class RAG_Model(BaseModel):
         os.makedirs(local_model_path, exist_ok=True)
 
         # Load the embeddings model from the cache directory or download it
+        # NOTE: Cache got problem, so no cache in local model path. why? idk
         self.embeddings = HuggingFaceEmbeddings(
-            model_name=model_name, show_progress=False, cache_folder=local_model_path)
+            model_name=model_name, show_progress=False)
 
     def load_vector_store(self, vector_store_path: str = "vector_store/<your_vector_store_name>", file_paths=[]):
         """Load the FAISS vector store if it exists."""

@@ -30,7 +30,7 @@ Key features of the AI server include:
 
 2. Install the dependencies:
 
-   This project uses Python 3.10.14.
+   IMPORTANT: This project uses Python 3.10.14.
 
    Make sure to have some virtual environment set up. If you don't, you can create one using:
 
