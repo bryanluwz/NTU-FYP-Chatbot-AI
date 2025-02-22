@@ -126,7 +126,7 @@ class RAG_Model(BaseModel):
         """
         Strip metadata from the documents.
         """
-        return [doc.page_content for doc in documents]
+        return [f"Page {doc.metadata.get('page', 'N/A')}: {doc.page_content}" for doc in documents]
 
     def load_embeddings_model(self, model_name: str = "paraphrase-MiniLM-L6-v2", embedding_model_path: str = "embedding_models"):
         """Initialize HuggingFace embeddings."""
@@ -186,7 +186,7 @@ class RAG_Model(BaseModel):
 
         # Split document into chunks
         text_splitter = CharacterTextSplitter(
-            chunk_size=1000,
+            chunk_size=690,
             chunk_overlap=30,
             separator="\n"
         )
@@ -202,7 +202,7 @@ class RAG_Model(BaseModel):
         self.vector_store_path = vector_store_path
         self.vector_store = vectorstore
 
-    def initialize_llm(self, model_name: str = 'distilgpt2', max_new_tokens: int = 256, temperature: float = 0.6, model_path: str = None, task: str = "text-generation"):
+    def initialize_llm(self, model_name: str = 'distilgpt2', max_new_tokens: int = 512, temperature: float = 0.6, model_path: str = None, task: str = "text-generation"):
         """
         Initialize the pipeline for text generation, and save/load the model.
         """
@@ -362,7 +362,7 @@ class RAG_Model(BaseModel):
             "You are tasked to reformulate the user's query to generate five similar words and phrases"
             "\n"
             "DO NOT answer the question, but ensure the reformulated query is relevant to the user's question. "
-            "ONLY return the related words and synonyms, without additional text. "
+            "ONLY return the related words and synonyms, without additional text and numberings. "
         )
 
         final_prompt = [
@@ -378,7 +378,7 @@ class RAG_Model(BaseModel):
 
         return reformulated_user_query
 
-    def _retrieval(self, query: str):
+    def _retrieval(self, *query: str):
         """
         Retrieval and post-retrieval processing.
         """
@@ -390,13 +390,19 @@ class RAG_Model(BaseModel):
             "[!] Retrieval - Searching, filtering and ranking for relevant documents...")
 
         # Pass context to the vector store for retrieval
-        # k = 20 for sparse retrieval, then passed to filtering for better retreival
-        context = self.vector_store.similarity_search(query, k=20)
-        filtered_context = self._filter_and_rerank_context(context, query)
+        # k = 10 for sparse retrieval, then passed to filtering for better retreival
+        full_query = "\n".join([q for q in query])
+        reformulated_queries = full_query.split("\n")
+
+        context = [self.vector_store.similarity_search(
+            q, k=20) for q in reformulated_queries]
+        flattened_context = [doc for sublist in context for doc in sublist]
+        filtered_context = self._filter_and_rerank_context(
+            flattened_context, full_query)
 
         return filtered_context
 
-    def _filter_and_rerank_context(self, context: list[Document], query: str, num_return=3):
+    def _filter_and_rerank_context(self, context: list[Document], query: str, num_return=4):
         """
         Use BM25, dense retrieval, and cross-encoder reranking to filter and rank relevant documents.
         """
@@ -501,6 +507,17 @@ class RAG_Model(BaseModel):
 
         scores = self.cross_encoder.predict(query_image_pairs)
 
+        # Normalise scores
+        if not scores or len(scores) == 0:
+            return []
+
+        max_score = max([score['score'] for score in scores])
+        min_score = min([score['score'] for score in scores])
+
+        for score in scores:
+            score['score'] = (score['score'] - min_score) / \
+                (max_score - min_score + 1e-8)
+
         sorted_images = sorted(
             list(zip(images, scores)), key=lambda x: x[1]['score'], reverse=True)
 
@@ -528,6 +545,7 @@ class RAG_Model(BaseModel):
         relevant_images = []
 
         for doc in context:
+            # self._debug_print(doc)
             if "linked_image" in doc.metadata:
                 if len(attached_file_paths) > 0:
                     self._debug_print(
@@ -544,23 +562,15 @@ class RAG_Model(BaseModel):
                     image_text = image_dict["text"]
                     image_path = image_dict["metadata"]["file_path"]
 
-                    # 1.1. Compute relevance (vector similarity or keyword match)
-                    similarity_score = self._compute_text_similarity(
-                        query, image_description + " " + image_text)
-                    # self._debug_print(
-                    #     f"[!] Generation - Similarity score for '{image_description}': {similarity_score:.3f}")
-
+                    # 1.1. Append image to relevant images
                     # Adjust threshold as needed
-                    if similarity_score > 0.3 and not any([img["metadata"]["file_path"] == image_path for img in relevant_images]):
-                        self._debug_print(
-                            f"[!] Generation - Relevant image found (i think): {image_path}")
-                        relevant_images.append({
-                            "description": image_description,
-                            "text": image_text,
-                            "metadata": {
-                                "file_path": image_path
-                            }
-                        })
+                    relevant_images.append({
+                        "description": image_description,
+                        "text": image_text,
+                        "metadata": {
+                            "file_path": image_path
+                        }
+                    })
 
                 del doc.metadata["linked_image"]
 
@@ -585,9 +595,11 @@ class RAG_Model(BaseModel):
             "Teaching Assistant Guidelines: "
             "1. Either provide a direct answer or ask for clarification. "
             "2. Do not hallucinate. Do not make up factual information. "
-            "3. Use the provided context necessarily to generate a relevant answer, without making up information, but also make sure that it is coherent. "
+            "3. Use the provided context + general knowledge to generate a relevant answer, do not provide irrelevant information. "
             "4. Use markdown formatting only when necessary. "
             "5. DO NOT generate a long response. Only provide a short and concise answer. "
+            "6. Respond to greetings and goodbyes in a human-like manner. "
+            "7. Do not include additional text and numberings, found in the references. "
         )
 
         # 3.1. Append stuffs
@@ -629,11 +641,18 @@ class RAG_Model(BaseModel):
         # 4. Rank relevant images based on the generated response
         scored_relevant_images = self._rank_relevant_images(
             relevant_images, response)
+
         filtered_images = []
+
         for img, score in scored_relevant_images:
             # Adjust threshold as needed
-            if score['score'] > 0.3:
+            if score['score'] > 0.9:
                 filtered_images.append(img)
+
+        # if len(filtered_images) == 0:
+        #     # Get the highest scored image
+        #     if scored_relevant_images:
+        #         filtered_images.append(scored_relevant_images[0][0])
 
         if filtered_images:
             self._debug_print(
@@ -658,17 +677,17 @@ class RAG_Model(BaseModel):
         # Call all the functions in order
         retrieved_context = None
         if len(attached_file_paths) == 0:
-            reformulated_query = self._preretrieval_query_formatting(
-                query)
-            retrieved_context = self._retrieval(reformulated_query)
+            reformulated_query = self._preretrieval_query_formatting(query)
+            retrieved_context = self._retrieval(reformulated_query, query)
         else:
             self._debug_print(
                 f"[!] Query - Attached files are present, ignoring RAG model...")
 
-        # TEMP: Chat history disable except first message
+        # TEMP: Chat history stuff
         if chat_history:
-            if chat_history[0] != chat_history[-1]:
-                chat_history = [chat_history[0], chat_history[-1]]
+            if chat_history[0] != chat_history[-1] and chat_history[0] != chat_history[-2]:
+                chat_history = [chat_history[0],
+                                chat_history[-1], chat_history[-2]]
             else:
                 chat_history = [chat_history[0]]
 

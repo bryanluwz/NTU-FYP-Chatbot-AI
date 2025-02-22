@@ -172,9 +172,9 @@ def load_documents(file_paths, describe_image_callback=None, debug_print=False):
 
             if loader:
                 loaded_docs = loader.load()
-                for doc in loaded_docs:
+                for i, doc in enumerate(loaded_docs):
                     doc.metadata = {"file_name": os.path.basename(
-                        file_path), "file_path": file_path}
+                        file_path), "file_path": file_path, "page": i + 1, "source": "document"}
                     text_docs.append(doc)
 
             image_docs = []
@@ -205,6 +205,9 @@ def load_documents(file_paths, describe_image_callback=None, debug_print=False):
                 if closest_text_doc:
                     if "linked_image" not in closest_text_doc.metadata:
                         closest_text_doc.metadata["linked_image"] = []
+                    if debug_print:
+                        print(
+                            f"🖼️ Linked image to text: {image_doc['metadata']['file_name']} -> {closest_text_doc.metadata.get('page')}")
                     closest_text_doc.metadata["linked_image"].append(image_doc)
 
             if debug_print:

@@ -4,8 +4,9 @@ RUN apt-get update && apt-get install -y ffmpeg
 
 WORKDIR /app
 
-# Install dependencies directly (skip the builder stage)
+# Install dependencies (by default torch with GPU, it's ok if you don't have GPU it'll still work, i think)
 COPY requirements.txt /app/
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 RUN pip install --prefer-binary --no-cache-dir -r requirements.txt
 
 # Copy the rest of the app

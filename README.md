@@ -53,6 +53,13 @@ Key features of the AI server include:
    pip install -r requirements.txt
    ```
 
+   If you are using a GPU, you can install the GPU version of PyTorch:
+   If you are not using a GPU, this would also work, but you can install the CPU version of PyTorch instead. PyTorch would not be installed via the `requirements.txt` file, because I don't know how to do that.
+
+   ```bash
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+   ```
+
    Some of the dependencies are useless because I might have forgotten to remove them. You can try remove one-by-one and see if the server still works. If you actually do this, please let me know the results.
 
 3. Create your own `server.key` and `server.cert` files for HTTPS:
@@ -93,4 +100,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgements
 
-1. [ME](https://github.com/bryanluwz) for building this awesome chatbot frontend, alone, with no help from humans. 🤖
+1. [ME](https://github.com/bryanluwz) for building this awesome chatbot AI server, alone, with no help from humans. 🤖
