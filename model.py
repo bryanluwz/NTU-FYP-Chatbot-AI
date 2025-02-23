@@ -14,6 +14,8 @@ import torch
 if torch.cuda.is_available():
     print("[+] GPU found lessgoo..., setting memory fraction to 80%")
     torch.cuda.set_per_process_memory_fraction(0.8)
+else:
+    print("[!] GPU not found, using CPU... sadge")
 
 
 # Config

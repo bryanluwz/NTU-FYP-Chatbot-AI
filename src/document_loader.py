@@ -123,7 +123,9 @@ def extract_images_from_pdf(pdf_path):
                 base_dir, f"page_{page_num + 1}_img_{img_index + 1}.{img_ext}")
             with open(img_path, "wb") as f:
                 f.write(img_data)
-            image_data.append((page_num + 1, img_path))
+            relative_path = os.path.relpath(
+                img_path, start=os.path.dirname(os.path.dirname(os.path.dirname(pdf_path))))
+            image_data.append((page_num + 1, relative_path))
 
     return image_data
 
