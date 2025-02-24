@@ -597,8 +597,8 @@ class RAG_Model(BaseModel):
             "2. Do not hallucinate. Do not make up factual information. "
             "3. Use the provided context + general knowledge to generate a relevant answer, do not provide irrelevant information. "
             "4. Use markdown formatting only when necessary. "
-            "5. DO NOT generate a long response. Only provide a short and concise answer. "
-            "6. Respond to greetings and goodbyes in a human-like manner. "
+            "5. DO NOT generate a long response. Only provide a short and concise answer. Provide short elaboration. "
+            "6. When it is just a greeting / farewell / thanks, ignore context and respond warmly. "
             "7. Do not include additional text and numberings, found in the references. "
         )
 
@@ -611,6 +611,8 @@ class RAG_Model(BaseModel):
 
         if context:
             context_str = '\n'.join(context)
+            self._debug_print(
+                f"[!] Generation - Context: {context_str}")
             messages.append(
                 {"role": "user", "content": f"Context: {context_str}"})
 

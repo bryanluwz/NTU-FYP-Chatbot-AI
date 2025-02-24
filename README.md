@@ -42,7 +42,7 @@ Key features of the AI server include:
 
    ```bash
    # On Windows
-   .\venv\Scripts\Activate.ps1
+   .\venv\Scripts\activate
    # On Unix or MacOS
    source ./venv/bin/activate
    ```

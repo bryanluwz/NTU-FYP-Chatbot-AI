@@ -198,6 +198,9 @@ def transferDocumentSrc():
         qa_model.load_vector_store(vector_store_path, [os.path.abspath(
             file_path) for file_path in list_all_files(dir_name)])
 
+        # For some reason it would be better to unload the vector store here
+        qa_model.vector_store = None
+
         # Stonks
         print("[+] Document uploaded successfully")
 
