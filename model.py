@@ -5,7 +5,9 @@ This file contains all the RAG model stuffs
 from src.RAG_Model import RAG_Model
 from src.RAG_Model_API import RAG_Model_API
 from src.STT_Model import STT_Model
+from src.STT_Model_API import STT_Model_API
 from src.TTS_Model import TTS_Model
+from src.TTS_Model_API import TTS_Model_API
 
 import os
 from dotenv import dotenv_values
@@ -92,7 +94,7 @@ if os.path.exists("/run/secrets/azure_api_endpoint"):
         AZURE_API_ENDPOINT = f.read().strip()
 else:
     print("[!] Azure API endpoint not found in secrets: /run/secrets/azure_api_endpoint, using the .env file")
-    AZURE_API_ENDPOINT = config.get('AZURE_AI_ENDPOINT', None)
+    AZURE_API_ENDPOINT = config.get('AZURE_API_ENDPOINT', None)
 
 AZURE_API_KEY = None
 if os.path.exists("/run/secrets/azure_api_key"):
@@ -101,7 +103,17 @@ if os.path.exists("/run/secrets/azure_api_key"):
         AZURE_API_KEY = f.read().strip()
 else:
     print("[!] Azure API key not found in secrets: /run/secrets/azure_api_key, using the .env file")
-    AZURE_API_KEY = config.get('AZURE_AI_API_KEY', None)
+    AZURE_API_KEY = config.get('AZURE_API_KEY', None)
+
+
+GOOGLE_CLOUD_API_KEY = None
+if os.path.exists("/run/secrets/google_cloud_api_key"):
+    with open("/run/secrets/google_cloud_api_key") as f:
+        print("[+] Found TTS API key in secrets: /run/secrets/google_cloud_api_key")
+        GOOGLE_CLOUD_API_KEY = f.read().strip()
+else:
+    print("[!] TTS API key not found in secrets: /run/secrets/google_cloud_api_key, using the .env file")
+    GOOGLE_CLOUD_API_KEY = config.get('GOOGLE_CLOUD_API_KEY', None)
 
 
 def create_rag_model(debug=False, api_mode=False):
@@ -129,8 +141,15 @@ def create_rag_model(debug=False, api_mode=False):
         return qa_model
 
 
-def create_tts_model(debug=False):
-    tts_model = TTS_Model(debug=debug)
+def create_tts_model(debug=False, api_mode=False):
+    if not api_mode:
+        print("[!] API mode is not enabled, using the TTS module in local mode")
+        tts_model = TTS_Model(debug=debug)
+    else:
+        print("[!] API mode is enabled, using the TTS module in API mode")
+        tts_model = TTS_Model_API(
+            debug=debug, google_cloud_api_key=GOOGLE_CLOUD_API_KEY)
+        tts_model.initialise_tts()
     return tts_model
 
 
@@ -141,7 +160,14 @@ os.makedirs(STT_MODEL_PATH, exist_ok=True)
 STT_MODEL_NAME = 'openai/whisper-small.en'
 
 
-def create_stt_model(debug=False):
-    stt_model = STT_Model(debug=debug)
-    stt_model.initialise_stt(STT_MODEL_NAME, STT_MODEL_PATH)
+def create_stt_model(debug=False, api_mode=False):
+    if not api_mode:
+        print("[!] API mode is not enabled, using the STT module in local mode")
+        stt_model = STT_Model(debug=debug)
+        stt_model.initialise_stt(STT_MODEL_NAME, STT_MODEL_PATH)
+    else:
+        print("[!] API mode is enabled, using the STT module in API mode")
+        stt_model = STT_Model_API(
+            debug=debug, stt_api_key=GOOGLE_CLOUD_API_KEY)
+        stt_model.initialise_stt()
     return stt_model

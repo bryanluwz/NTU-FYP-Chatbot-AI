@@ -12,3 +12,5 @@ chat_bp.add_url_rule('/tts', view_func=tts, methods=['POST'])
 chat_bp.add_url_rule('/stt', view_func=stt, methods=['POST'])
 chat_bp.add_url_rule(
     'postQueryImage', view_func=post_query_image, methods=['POST'])
+chat_bp.add_url_rule('/availableVoices',
+                     view_func=query_voices, methods=['POST'])

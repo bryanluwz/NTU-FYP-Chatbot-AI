@@ -6,7 +6,8 @@ from dotenv import dotenv_values
 
 from src.functions import list_all_files
 from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME, VECTOR_STORE_PATH, create_stt_model, create_tts_model
-
+from src.TTS_Model import TTS_Model_Map
+from src.TTS_Model_API import TTS_Model_Map as TTS_API_Model_Map
 
 config = dotenv_values(".env")
 chat_config = {"debug": False, "api_mode": False}
@@ -273,6 +274,23 @@ def stt():
         "success": True,
         "data": {
             'response': text}})
+
+
+def query_voices():
+    local_voices = TTS_Model_Map.model_map
+    api_voices = TTS_API_Model_Map.model_map
+
+    voices = None
+
+    if chat_config.get("api_mode", False):
+        voices = api_voices.keys()
+    else:
+        voices = local_voices.keys()
+
+    return jsonify({
+        "success": True,
+        "data": {
+            'response': list(voices)}})
 
 
 def post_query_image():

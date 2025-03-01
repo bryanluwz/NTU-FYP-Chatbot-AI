@@ -1,3 +1,4 @@
+import time
 from docx import Document as docx_Document
 import fitz
 import os
@@ -155,7 +156,7 @@ def extract_images_from_docx(docx_path):
     return image_data
 
 
-def load_documents(file_paths, describe_image_callback=None, debug_print=False):
+def load_documents(file_paths, describe_image_callback=None, debug_print=False, is_rate_limit=False):
     """Load multiple documents from various formats into a single list of documents with metadata."""
     text_docs = []
 
@@ -189,6 +190,9 @@ def load_documents(file_paths, describe_image_callback=None, debug_print=False):
 
             image_docs = []
 
+            # Describe images and create Document objects
+            t0 = time.time()
+
             for i, (order, img_path) in enumerate(image_data):
                 if debug_print:
                     print(
@@ -200,6 +204,12 @@ def load_documents(file_paths, describe_image_callback=None, debug_print=False):
                     "metadata": {"file_name": os.path.basename(img_path), "file_path": img_path, "source": "image"}
                 }
                 image_docs.append((order, image_doc))
+                t1 = time.time()
+
+                if is_rate_limit:
+                    # Rate limit is 20 requests per minute, so we sleep for 3 - (t1 - t0) seconds wiwth 0.2 for error margin
+                    time.sleep(3.2 - (t1 - t0))
+                    t0 = time.time()
 
             # Link images to text by page/order
             for order, image_doc in image_docs:

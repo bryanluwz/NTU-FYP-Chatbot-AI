@@ -190,9 +190,6 @@ class TTS_Model(BaseModel):
 
         return final_file_path
 
-    def stt(self):
-        pass
-
 
 if __name__ == '__main__':
 
