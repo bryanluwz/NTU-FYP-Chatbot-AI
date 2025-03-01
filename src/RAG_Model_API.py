@@ -1,5 +1,7 @@
 """
 This is the implementation of the RAG Chatbot model
+but with ✨API✨ for firee
+but like i spent quite a lot of time developing for local, why i change to using API
 
 Copyright: Bryan Lu We Zhern
 Just credit me fully for the original code that's all
@@ -25,27 +27,27 @@ from transformers import pipeline
 from transformers.utils.logging import set_verbosity_error
 
 from .document_loader import load_documents
-from src.Base_AI_Model import BaseModel
+from src.RAG_Model import RAG_Model
+
+from together import Together
+
+from azure.ai.vision.imageanalysis import ImageAnalysisClient
+from azure.ai.vision.imageanalysis.models import VisualFeatures
+from azure.ai.vision.imageanalysis.models._models import ImageAnalysisResult
+from azure.core.credentials import AzureKeyCredential
 
 # Silence wench
 set_verbosity_error()  # Silence Hugging Face logs i think, maybe it's not even working
 
 
-class RAG_Model(BaseModel):
-    def __init__(self, debug=False, device=None, huggingface_token=None):
-        super().__init__(debug=debug)
-        self.embeddings = None
-        self.vector_store = None
-        self.vector_store_path = None
+class RAG_Model_API(RAG_Model):
+    def __init__(self, debug=False, device=None, together_api_key=None, azure_api_endpoint=None, azure_api_key=None):
+        super().__init__(debug=debug, device=device)
+        self.llm_pipeline_kwargs = None
 
-        self.llm_pipeline = None
-        self.image_pipeline = None
-
-        self.cross_encoder = None
-
-        self.debug = debug
-        self.device = device or (1 if cuda.is_available() else 0)
-        self.huggingface_token = huggingface_token
+        self.together_api_key = together_api_key
+        self.azure_api_endpoint = azure_api_endpoint
+        self.azure_api_key = azure_api_key
 
     def _convert_chat_history_to_pipeline_inputs(self, messages: dict[str, str], max_history_length: int = 3):
         """
@@ -60,14 +62,18 @@ class RAG_Model(BaseModel):
 
     def _describe_image(self, image_path: str):
         """
-        Describe the image using the image model. (and also OCR)
+        Describe the image using the image pipeline. (and also OCR)
         """
         assert self.image_pipeline is not None, "Image pipeline not initialized."
 
-        image = Image.open(image_path)
+        image_bytes = open(image_path, "rb").read()
 
-        image_description = self.image_pipeline(image)
-        image_description_text = image_description[0]['generated_text']
+        image_description_response = self.image_pipeline.analyze(
+            image_bytes, visual_features=[VisualFeatures.CAPTION]
+        )
+
+        image_description = image_description_response.get(
+            'captionResult').get('text')
 
         # Get OCR text
         try:
@@ -76,7 +82,7 @@ class RAG_Model(BaseModel):
             print(f"❌ OCR failed (-_-): {e}")
             ocr_text = ""
 
-        return {"description": image_description_text, "text": ocr_text}
+        return {"description": image_description, "text": ocr_text}
 
     def _load_input_documents(self, file_paths: list[str]):
         """
@@ -202,111 +208,29 @@ class RAG_Model(BaseModel):
         self.vector_store_path = vector_store_path
         self.vector_store = vectorstore
 
-    def initialize_llm(self, model_name: str = 'distilgpt2', max_new_tokens: int = 512, temperature: float = 0.6, model_path: str = None, task: str = "text-generation"):
+    def initialize_llm(self, model_name: str = 'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free', max_new_tokens: int = 512, temperature: float = 0.6):
         """
-        Initialize the pipeline for text generation, and save/load the model.
+        Initialize the Together.AI client for text generation
         """
-        model_save_path = os.path.join(model_path, model_name)
+        self.llm_pipeline_model = {
+            "model": model_name,
+            "max_new_tokens": max_new_tokens,
+            "temperature": temperature,
+        }
+        self.llm_pipeline = Together(api_key=None)
 
-        # Check if the model is already saved
-        if os.path.exists(model_save_path):
-            print(f"🔄 Loading model from {model_save_path}...")
-            text_gen_pipeline = pipeline(
-                task=task,
-                model=model_save_path,
-                tokenizer=model_save_path,
-                max_new_tokens=max_new_tokens,
-                do_sample=True,
-                framework="pt",
-                device_map="auto",
-                torch_dtype="auto"
-            )
-        else:
-            # Get the model size before downloading
-            print(
-                f"⬇️ Downloading and saving model '{model_name}' to {model_save_path}...")
-            text_gen_pipeline = pipeline(
-                task=task,
-                model=model_name,
-                tokenizer=model_name,
-                do_sample=True,
-                framework="pt",
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                device_map="auto",
-                torch_dtype="auto",
-                token=self.huggingface_token
-            )
-
-            # Save the model and tokenizer
-            text_gen_pipeline.model.save_pretrained(model_save_path)
-            text_gen_pipeline.tokenizer.save_pretrained(model_save_path)
-            print(f"✅ Model '{model_name}' saved to {model_save_path}.")
-
-        self.llm_pipeline = text_gen_pipeline
-
-    def intialize_image_pipeline(self, model_name: str = 'Salesforce/blip-image-captioning-base', model_path: str = None, task: str = "image-to-text"):
+    def initialize_image_pipeline(self):
         """
         Initialize the image pipeline for image and text encoding.
         """
-        model_save_path = os.path.join(model_path, model_name)
+        assert self.azure_api_endpoint is not None, "Azure API endpoint not initialized."
+        assert self.azure_api_key is not None, "Azure API key not initialized."
 
-        # Check if the model is already saved
-        # `device` cannot be set to 'auto' for BLIP, so we need to specify the device manually, if GPU cannot be used, fall back to CPU
-        print(f"🔄 Loading BLIP model from {model_save_path}...")
-
-        if os.path.exists(model_save_path):
-            try:
-                print(f"🔄 Loading BLIP model from {model_save_path}...")
-                self.image_pipeline = pipeline(
-                    task=task,
-                    model=model_save_path,
-                    tokenizer=model_save_path,
-                    framework="pt",
-                    device=self.device
-                )
-            except RuntimeError as e:
-                if "CUDA error: invalid device ordinal" in str(e):
-                    print(
-                        "⚠️ Idk there's some weird GPU device behaviour. Falling back to CPU.")
-                    self.image_pipeline = pipeline(
-                        task=task,
-                        model=model_save_path,
-                        tokenizer=model_save_path,
-                        framework="pt",
-                        device=-1  # Use CPU
-                    )
-                else:
-                    raise e
-        else:
-            print(
-                f"⬇️ Downloading and saving BLIP model '{model_name}' to {model_save_path}...")
-
-            try:
-                self.image_pipeline = pipeline(
-                    task=task,
-                    model=model_name,
-                    tokenizer=model_name,
-                    framework="pt",
-                    device=self.device  # Use self.device to specify the device
-                )
-            except RuntimeError as e:
-                if "CUDA error: invalid device ordinal" in str(e):
-                    print(
-                        "⚠️ Idk there's some weird GPU device behaviour. Falling back to CPU.")
-                    self.image_pipeline = pipeline(
-                        task=task,
-                        model=model_name,
-                        tokenizer=model_name,
-                        framework="pt",
-                        device=-1  # Use CPU
-                    )
-                else:
-                    raise e
-
-            # Save the model
-            self.image_pipeline.save_pretrained(model_save_path)
-            print(f"✅ BLIP model '{model_name}' saved to {model_save_path}.")
+        client = ImageAnalysisClient(
+            endpoint=self.azure_api_endpoint,
+            credential=AzureKeyCredential(self.azure_api_key)
+        )
+        self.image_pipeline = client
 
     def initialize_cross_encoder(self, model_name: str = 'cross-encoder/ms-marco-MiniLM-L-6-v2', model_path: str = None):
         """
@@ -370,11 +294,13 @@ class RAG_Model(BaseModel):
             {"role": "user", "content": f"Help me generate five similar words and phrases for: {query}"}
         ]
 
-        reformulated_user_query = self.llm_pipeline(final_prompt)[
-            0]['generated_text'][-1]['content']
+        completion = self.llm_pipeline.chat.completions.create(
+            model=self.llm_pipeline_kwargs["model"], messages=final_prompt, max_tokens=self.llm_pipeline_kwargs["max_new_tokens"], temperature=self.llm_pipeline_kwargs["temperature"])
+
+        reformulated_user_query = completion.choices[0].message.content
 
         self._debug_print(
-            f"[!] Pre-retrieval - Reformulated \n{query}\n    to\n{reformulated_user_query}")
+            f"[!] Pre-retrieval - Reformulated \n{query}\n   to \n{reformulated_user_query}")
 
         return reformulated_user_query
 
@@ -636,9 +562,10 @@ class RAG_Model(BaseModel):
             {"role": "user", "content": user_message + f"Answer in a concise manner, The user input is '{query}'"})
 
         # 3.2. Generate response
-        response: str = self.llm_pipeline(
-            messages, eos_token_id=self.llm_pipeline.tokenizer.eos_token_id
-        )[0]['generated_text'][-1]['content']
+        completion = self.llm_pipeline.chat.completions.create(
+            messages=messages, max_tokens=self.llm_pipeline_kwargs["max_new_tokens"], temperature=self.llm_pipeline_kwargs["temperature"], model=self.llm_pipeline_kwargs["model"])
+
+        response = completion.choices[0].message.content
 
         self._debug_print(f"[!] Generation - Response: {response}")
 

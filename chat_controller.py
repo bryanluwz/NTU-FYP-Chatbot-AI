@@ -9,7 +9,7 @@ from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME,
 
 
 config = dotenv_values(".env")
-chat_config = {"debug": False}
+chat_config = {"debug": False, "api_mode": False}
 
 
 """

@@ -104,10 +104,16 @@ FILE_TYPES = {
 }
 
 
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))  # This gets /src
+ROOT_DIR = os.path.abspath(os.path.join(
+    ROOT_DIR, ".."))  # Move up to /project-root
+
+
 def extract_images_from_pdf(pdf_path):
     """Extract images from a PDF and return a list of (page_number, image_path)."""
     doc = fitz.open(pdf_path)
-    base_dir = os.path.splitext(pdf_path)[0] + "_images"
+    base_dir = os.path.join(ROOT_DIR, os.path.splitext(
+        os.path.basename(pdf_path))[0] + "_images")
     os.makedirs(base_dir, exist_ok=True)
     image_data = []
 
@@ -119,11 +125,14 @@ def extract_images_from_pdf(pdf_path):
             base_image = doc.extract_image(xref)
             img_data = base_image["image"]
             img_ext = base_image["ext"]
-            img_path = os.path.join(
-                base_dir, f"page_{page_num + 1}_img_{img_index + 1}.{img_ext}")
+            img_filename = f"page_{page_num + 1}_img_{img_index + 1}.{img_ext}"
+            img_path = os.path.join(base_dir, img_filename)
+
             with open(img_path, "wb") as f:
                 f.write(img_data)
-            image_data.append((page_num + 1, img_path))
+
+            image_data.append(
+                (page_num + 1, os.path.relpath(img_path, ROOT_DIR)))
 
     return image_data
 
@@ -131,7 +140,8 @@ def extract_images_from_pdf(pdf_path):
 def extract_images_from_docx(docx_path):
     """Extract images from a DOCX file with their order of appearance."""
     document = docx_Document(docx_path)
-    base_dir = os.path.splitext(docx_path)[0] + "_images"
+    base_dir = os.path.join(ROOT_DIR, os.path.splitext(
+        os.path.basename(docx_path))[0] + "_images")
     os.makedirs(base_dir, exist_ok=True)
     image_data = []
 
@@ -140,7 +150,7 @@ def extract_images_from_docx(docx_path):
             img_path = os.path.join(base_dir, f"image_{i + 1}.png")
             with open(img_path, "wb") as f:
                 f.write(document.part.rels[rel].target_part.blob)
-            image_data.append((i + 1, img_path))
+            image_data.append((i + 1, os.path.relpath(img_path, ROOT_DIR)))
 
     return image_data
 
