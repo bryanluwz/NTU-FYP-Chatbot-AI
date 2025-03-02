@@ -101,10 +101,9 @@ else:
 GOOGLE_CLOUD_API_KEY = None
 # Actually should be a json file but i dont care
 if os.path.exists("/run/secrets/google_cloud_api_key"):
-    with open("/run/secrets/google_cloud_api_key") as f:
-        print(
-            "[+] Found Google Cloud API key in secrets: /run/secrets/google_cloud_api_key")
-        GOOGLE_CLOUD_API_KEY = f.read().strip()
+    print(
+        "[+] Found Google Cloud API key in secrets: /run/secrets/google_cloud_api_key")
+    GOOGLE_CLOUD_API_KEY = "/run/secrets/google_cloud_api_key"
 else:
     print("[!] Google Cloud API key not found in secrets: /run/secrets/google_cloud_api_key, using the secrets/google_cloud_api_key.json file")
     GOOGLE_CLOUD_API_KEY = os.path.abspath(

@@ -123,7 +123,7 @@ class RAG_Model_API(RAG_Model):
             "max_new_tokens": max_new_tokens,
             "temperature": temperature,
         }
-        self.llm_pipeline = Together(api_key=None)
+        self.llm_pipeline = Together(api_key=self.together_api_key)
 
     def initialize_image_pipeline(self):
         """
