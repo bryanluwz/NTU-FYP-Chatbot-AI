@@ -22,13 +22,17 @@ from rank_bm25 import BM25Okapi
 from sklearn.metrics.pairwise import cosine_similarity
 
 from transformers import pipeline
-from transformers.utils.logging import set_verbosity_error
 
 from .document_loader import load_documents
 from src.Base_AI_Model import BaseModel
 
-# Silence wench
-set_verbosity_error()  # Silence Hugging Face logs i think, maybe it's not even working
+
+def _softmax(scores, temperature=0.5):
+    """Apply softmax with temperature scaling."""
+    scores = np.array(scores) / temperature
+    # Subtract max for numerical stability
+    exp_scores = np.exp(scores - np.max(scores))
+    return (exp_scores / np.sum(exp_scores)).tolist()
 
 
 class RAG_Model(BaseModel):
@@ -170,7 +174,7 @@ class RAG_Model(BaseModel):
         """Create a new FAISS vector store from the given PDF and save it."""
         assert self.embeddings is not None, "Embeddings model not initialized."
 
-        print(
+        self._debug_print(
             "⚠️ Creating a new vector store, if one already exists it will be overwritten.")
 
         if os.path.exists(vector_store_path):
@@ -197,7 +201,7 @@ class RAG_Model(BaseModel):
 
         # Persist the vectors locally on disk
         vectorstore.save_local(vector_store_path)
-        print("💾 Vector store saved locally.")
+        self._debug_print("💾 Vector store saved locally.")
 
         self.vector_store_path = vector_store_path
         self.vector_store = vectorstore
@@ -245,7 +249,7 @@ class RAG_Model(BaseModel):
 
         self.llm_pipeline = text_gen_pipeline
 
-    def intialize_image_pipeline(self, model_name: str = 'Salesforce/blip-image-captioning-base', model_path: str = None, task: str = "image-to-text"):
+    def initialize_image_pipeline(self, model_name: str = 'Salesforce/blip-image-captioning-base', model_path: str = None, task: str = "image-to-text"):
         """
         Initialize the image pipeline for image and text encoding.
         """
@@ -494,32 +498,57 @@ class RAG_Model(BaseModel):
         """
         Rank relevant images based on the generated response and images description + text
         Only with cross encoder
+        Actually there's also some filtering here hmmm
         """
         assert self.cross_encoder is not None, "Cross-encoder model not initialized."
 
+        # Merge description and text
         for image in images:
-            image["content"] = image["description"] + " " + image["text"]
-            del image["description"]
-            del image["text"]
+            image["content"] = image.pop(
+                "description") + " " + image.pop("text")
 
-        query_image_pairs = [{"text": self._truncate_text(
-            generated_response, 256), "text_pair": self._truncate_text(image["content"], 256)} for image in images]
+        # Prepare query-image pairs
+        query_image_pairs = [{
+            "text": self._truncate_text(generated_response, 256),
+            "text_pair": self._truncate_text(image["content"], 256)
+        } for image in images]
 
         scores = self.cross_encoder.predict(query_image_pairs)
 
-        # Normalise scores
         if not scores or len(scores) == 0:
             return []
 
-        max_score = max([score['score'] for score in scores])
-        min_score = min([score['score'] for score in scores])
+        raw_scores = [score['score'] for score in scores]
 
-        for score in scores:
-            score['score'] = (score['score'] - min_score) / \
-                (max_score - min_score + 1e-8)
+        # Handle single image case
+        if len(raw_scores) == 1:
+            # Raw cutoff at 0.whatever
+            return [(images[0], raw_scores[0])] if raw_scores[0] > 0.1 else []
+        else:
+            # If theres one that is very high score already then just return that one ba
+            if max(raw_scores) > 0.8:
+                return [(images[i], raw_scores[i]) for i, score in enumerate(raw_scores) if score > 0.8]
 
+            # Cutoff low scores if multiple images at threshold 0.whatever, set as 0
+            for i, score in enumerate(raw_scores):
+                if score < 0.02:
+                    raw_scores[i] = 0
+
+        # Apply softmax with temperature
+        softmax_scores: list[float] = _softmax(raw_scores, temperature=0.1)
+
+        # Compute dynamic cutoff
+        best_score = max(softmax_scores)
+        # Dynamic threshold with small buffer
+        cutoff = max(best_score - 0.05, 0)
+
+        # Pair images with scores and filter using cutoff
         sorted_images = sorted(
-            list(zip(images, scores)), key=lambda x: x[1]['score'], reverse=True)
+            [(img, score)
+             for img, score in zip(images, softmax_scores) if score >= cutoff],
+            key=lambda x: x[1],
+            reverse=True
+        )
 
         return sorted_images
 
@@ -646,17 +675,8 @@ class RAG_Model(BaseModel):
         scored_relevant_images = self._rank_relevant_images(
             relevant_images, response)
 
-        filtered_images = []
-
-        for img, score in scored_relevant_images:
-            # Adjust threshold as needed
-            if score['score'] > 0.9:
-                filtered_images.append(img)
-
-        # if len(filtered_images) == 0:
-        #     # Get the highest scored image
-        #     if scored_relevant_images:
-        #         filtered_images.append(scored_relevant_images[0][0])
+        filtered_images = [img for (
+            img, score) in scored_relevant_images if score > 0.5]
 
         if filtered_images:
             self._debug_print(
@@ -687,13 +707,12 @@ class RAG_Model(BaseModel):
             self._debug_print(
                 f"[!] Query - Attached files are present, ignoring RAG model...")
 
-        # TEMP: Chat history stuff
+        # Chat history stuff only last n messages + first message
         if chat_history:
-            if chat_history[0] != chat_history[-1] and chat_history[0] != chat_history[-2]:
-                chat_history = [chat_history[0],
-                                chat_history[-1], chat_history[-2]]
+            if len(chat_history) > 2:
+                chat_history = [chat_history[0]] + chat_history[-2:]
             else:
-                chat_history = [chat_history[0]]
+                chat_history = [chat_history[0]] + chat_history[1:]
 
         generated_response = self._generation(
             query=query, context=retrieved_context or [], attached_file_paths=attached_file_paths, chat_history=chat_history)

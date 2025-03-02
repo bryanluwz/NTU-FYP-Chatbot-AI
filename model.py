@@ -1,14 +1,6 @@
 """
 This file contains all the RAG model stuffs
 """
-
-from src.RAG_Model import RAG_Model
-from src.RAG_Model_API import RAG_Model_API
-from src.STT_Model import STT_Model
-from src.STT_Model_API import STT_Model_API
-from src.TTS_Model import TTS_Model
-from src.TTS_Model_API import TTS_Model_API
-
 import os
 from dotenv import dotenv_values
 import torch
@@ -107,17 +99,27 @@ else:
 
 
 GOOGLE_CLOUD_API_KEY = None
+# Actually should be a json file but i dont care
 if os.path.exists("/run/secrets/google_cloud_api_key"):
     with open("/run/secrets/google_cloud_api_key") as f:
-        print("[+] Found TTS API key in secrets: /run/secrets/google_cloud_api_key")
+        print(
+            "[+] Found Google Cloud API key in secrets: /run/secrets/google_cloud_api_key")
         GOOGLE_CLOUD_API_KEY = f.read().strip()
 else:
-    print("[!] TTS API key not found in secrets: /run/secrets/google_cloud_api_key, using the .env file")
-    GOOGLE_CLOUD_API_KEY = config.get('GOOGLE_CLOUD_API_KEY', None)
+    print("[!] Google Cloud API key not found in secrets: /run/secrets/google_cloud_api_key, using the secrets/google_cloud_api_key.json file")
+    GOOGLE_CLOUD_API_KEY = os.path.abspath(
+        '../secrets/google_cloud_api_key.json')
+    # Check if the file exists
+    if not os.path.exists(GOOGLE_CLOUD_API_KEY):
+        GOOGLE_CLOUD_API_KEY = None
+        raise Exception(
+            "[!] Google Cloud API key file not found: secrets/google_cloud_api_key.json, please provide the key in the secrets folder or in the .env file")
 
 
 def create_rag_model(debug=False, api_mode=False):
     if not api_mode:
+        from src.RAG_Model import RAG_Model
+
         print("[!] API mode is not enabled, using the LLM module in local mode")
         qa_model = RAG_Model(debug=debug, huggingface_token=HUGGINGFACE_TOKEN)
         qa_model.load_embeddings_model(EMBEDDING_NAME, EMBEDDING_MODEL_PATH)
@@ -125,10 +127,11 @@ def create_rag_model(debug=False, api_mode=False):
             model_name=CROSS_ENCODER_NAME, model_path=CROSS_ENCODER_MODEL_PATH)
         qa_model.initialize_llm(model_name=LLM_MODEL_NAME,
                                 max_new_tokens=512, model_path=LLM_MODEL_PATH, temperature=0.8, task=LLM_TASK)
-        qa_model.intialize_image_pipeline(model_name=BLIP_MODEL_NAME,
-                                          model_path=BLIP_MODEL_PATH, task=BLIP_TASK)
+        qa_model.initialize_image_pipeline(model_name=BLIP_MODEL_NAME,
+                                           model_path=BLIP_MODEL_PATH, task=BLIP_TASK)
         return qa_model
     else:
+        from src.RAG_Model_API import RAG_Model_API
         print("[!] API mode is enabled, using the LLM module in API mode")
         qa_model = RAG_Model_API(
             debug=debug, together_api_key=TOGETHER_API_KEY, azure_api_key=AZURE_API_KEY, azure_api_endpoint=AZURE_API_ENDPOINT)
@@ -137,18 +140,20 @@ def create_rag_model(debug=False, api_mode=False):
             model_name=CROSS_ENCODER_NAME, model_path=CROSS_ENCODER_MODEL_PATH)
         qa_model.initialize_llm(model_name="meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
                                 max_new_tokens=512, temperature=0.8)
-        qa_model.intialize_image_pipeline()
+        qa_model.initialize_image_pipeline()
         return qa_model
 
 
 def create_tts_model(debug=False, api_mode=False):
     if not api_mode:
+        from src.TTS_Model import TTS_Model
         print("[!] API mode is not enabled, using the TTS module in local mode")
         tts_model = TTS_Model(debug=debug)
     else:
+        from src.TTS_Model_API import TTS_Model_API
         print("[!] API mode is enabled, using the TTS module in API mode")
         tts_model = TTS_Model_API(
-            debug=debug, google_cloud_api_key=GOOGLE_CLOUD_API_KEY)
+            debug=debug, tts_api_key=GOOGLE_CLOUD_API_KEY)
         tts_model.initialise_tts()
     return tts_model
 
@@ -162,10 +167,12 @@ STT_MODEL_NAME = 'openai/whisper-small.en'
 
 def create_stt_model(debug=False, api_mode=False):
     if not api_mode:
+        from src.STT_Model import STT_Model
         print("[!] API mode is not enabled, using the STT module in local mode")
         stt_model = STT_Model(debug=debug)
         stt_model.initialise_stt(STT_MODEL_NAME, STT_MODEL_PATH)
     else:
+        from src.STT_Model_API import STT_Model_API
         print("[!] API mode is enabled, using the STT module in API mode")
         stt_model = STT_Model_API(
             debug=debug, stt_api_key=GOOGLE_CLOUD_API_KEY)

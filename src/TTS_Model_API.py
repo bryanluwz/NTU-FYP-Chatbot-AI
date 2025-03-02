@@ -8,6 +8,7 @@ import os
 import soundfile as sf
 import numpy as np
 from google.cloud import texttospeech
+from google.oauth2 import service_account
 
 from src.Base_AI_Model import BaseModel
 
@@ -50,10 +51,8 @@ class TTS_Model_API(BaseModel):
         Initialise the TTS pipeline
         """
         assert self.tts_api_key, "TTS API key not provided."
-
-        # God knows why google did this
-        os.environ["GOOGLE_API_KEY"] = self.tts_api_key
-        self.tts_pipeline = texttospeech.TextToSpeechClient()
+        self.tts_pipeline = texttospeech.TextToSpeechClient(
+            credentials=service_account.Credentials.from_service_account_file(self.tts_api_key))
 
     def tts(self, tts_name, text):
         """

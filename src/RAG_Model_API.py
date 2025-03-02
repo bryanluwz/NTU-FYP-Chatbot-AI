@@ -7,12 +7,12 @@ Copyright: Bryan Lu We Zhern
 Just credit me fully for the original code that's all
 """
 
-import pytesseract
-
+import os
+import shutil
 from langchain.text_splitter import CharacterTextSplitter
-from transformers.utils.logging import set_verbosity_error
-
 from .document_loader import load_documents
+from langchain_community.vectorstores import FAISS
+
 from src.RAG_Model import RAG_Model
 
 from together import Together
@@ -20,9 +20,6 @@ from together import Together
 from azure.ai.vision.imageanalysis import ImageAnalysisClient
 from azure.ai.vision.imageanalysis.models import VisualFeatures
 from azure.core.credentials import AzureKeyCredential
-
-# Silence wench
-set_verbosity_error()  # Silence Hugging Face logs i think, maybe it's not even working
 
 
 class RAG_Model_API(RAG_Model):
@@ -52,13 +49,44 @@ class RAG_Model_API(RAG_Model):
             'captionResult').get('text')
 
         # Get OCR text
-        try:
-            ocr_text = pytesseract.image_to_string(image_path)
-        except Exception as e:
-            print(f"❌ OCR failed (-_-): {e}")
-            ocr_text = ""
 
-        return {"description": image_description, "text": ocr_text}
+        return {"description": image_description, "text": ""}
+
+    def create_and_save_vector_store(self, vector_store_path, file_paths):
+        """Create a new FAISS vector store from the given PDF and save it."""
+        assert self.embeddings is not None, "Embeddings model not initialized."
+
+        self._debug_print(
+            "⚠️ Creating a new vector store, if one already exists it will be overwritten.")
+
+        if os.path.exists(vector_store_path):
+            shutil.rmtree(vector_store_path)
+            print("🗑️ Removed existing vector store.")
+
+        os.makedirs(vector_store_path, exist_ok=True)
+
+        # Load document using PyPDFLoader
+        documents = load_documents(
+            file_paths, describe_image_callback=self._describe_image,
+            debug_print=self.debug, is_rate_limit=True)
+
+        # Split document into chunks
+        text_splitter = CharacterTextSplitter(
+            chunk_size=690,
+            chunk_overlap=30,
+            separator="\n"
+        )
+        docs = text_splitter.split_documents(documents)
+
+        # Create vectors using FAISS
+        vectorstore = FAISS.from_documents(docs, self.embeddings)
+
+        # Persist the vectors locally on disk
+        vectorstore.save_local(vector_store_path)
+        self._debug_print("💾 Vector store saved locally.")
+
+        self.vector_store_path = vector_store_path
+        self.vector_store = vectorstore
 
     def _load_input_documents(self, file_paths: list[str]):
         """
@@ -90,7 +118,7 @@ class RAG_Model_API(RAG_Model):
         """
         Initialize the Together.AI client for text generation
         """
-        self.llm_pipeline_model = {
+        self.llm_pipeline_kwargs = {
             "model": model_name,
             "max_new_tokens": max_new_tokens,
             "temperature": temperature,
@@ -266,56 +294,11 @@ class RAG_Model_API(RAG_Model):
         scored_relevant_images = self._rank_relevant_images(
             relevant_images, response)
 
-        filtered_images = []
-
-        for img, score in scored_relevant_images:
-            # Adjust threshold as needed
-            if score['score'] > 0.9:
-                filtered_images.append(img)
-
-        # if len(filtered_images) == 0:
-        #     # Get the highest scored image
-        #     if scored_relevant_images:
-        #         filtered_images.append(scored_relevant_images[0][0])
+        filtered_images = [
+            img for (img, score) in scored_relevant_images if score > 0.5]
 
         if filtered_images:
             self._debug_print(
                 f"[!] Generation - Found {len(filtered_images)} relevant image(s) based on the generated response.")
 
         return response, [img["metadata"]["file_path"] for img in filtered_images] if filtered_images else []
-
-    def query(self, query: str, chat_history: list[any], attached_file_paths=[]):
-        """
-        Query the QA chain with the given input.
-
-        Search for the most relevant documents based on the query and chat history.
-        Return a bunch of documents based on the search results.
-        Then, rank the documents based on relevance to the query and return the top-k documents.
-        """
-        assert self.vector_store is not None, "Vector store not initialized."
-        assert self.llm_pipeline is not None, "LLM pipeline not initialized."
-        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
-
-        self._debug_print("Querying the QA chain...")
-
-        # Call all the functions in order
-        retrieved_context = None
-        if len(attached_file_paths) == 0:
-            reformulated_query = self._preretrieval_query_formatting(query)
-            retrieved_context = self._retrieval(reformulated_query, query)
-        else:
-            self._debug_print(
-                f"[!] Query - Attached files are present, ignoring RAG model...")
-
-        # TEMP: Chat history stuff
-        if chat_history:
-            if chat_history[0] != chat_history[-1] and chat_history[0] != chat_history[-2]:
-                chat_history = [chat_history[0],
-                                chat_history[-1], chat_history[-2]]
-            else:
-                chat_history = [chat_history[0]]
-
-        generated_response = self._generation(
-            query=query, context=retrieved_context or [], attached_file_paths=attached_file_paths, chat_history=chat_history)
-
-        return generated_response

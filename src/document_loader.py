@@ -7,6 +7,8 @@ import fitz  # PyMuPDF
 from langchain_core.documents import Document
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
 
+from dotenv import dotenv_values
+
 FILE_TYPES = {
     'pdf': 'document',
     'docx': 'document',
@@ -105,15 +107,22 @@ FILE_TYPES = {
 }
 
 
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))  # This gets /src
+FILE_DIR = os.path.dirname(os.path.abspath(__file__))  # This gets /src
+
+config = dotenv_values(os.path.join(FILE_DIR, "..", ".env"))
+DOCUMENTS_FOLDER = config.get('DOCUMENT_DIR_PATH', './documents')
+
 ROOT_DIR = os.path.abspath(os.path.join(
-    ROOT_DIR, ".."))  # Move up to /project-root
+    FILE_DIR, "..", DOCUMENTS_FOLDER))  # Move up to /project-root/documents
+
+PROJECT_ROOT = os.path.abspath(os.path.join(
+    FILE_DIR, ".."))  # Move up to /project-root
 
 
-def extract_images_from_pdf(pdf_path):
+def extract_images_from_pdf(pdf_path, subfolder_name):
     """Extract images from a PDF and return a list of (page_number, image_path)."""
     doc = fitz.open(pdf_path)
-    base_dir = os.path.join(ROOT_DIR, os.path.splitext(
+    base_dir = os.path.join(ROOT_DIR, subfolder_name, os.path.splitext(
         os.path.basename(pdf_path))[0] + "_images")
     os.makedirs(base_dir, exist_ok=True)
     image_data = []
@@ -133,15 +142,15 @@ def extract_images_from_pdf(pdf_path):
                 f.write(img_data)
 
             image_data.append(
-                (page_num + 1, os.path.relpath(img_path, ROOT_DIR)))
+                (page_num + 1, os.path.relpath(img_path, PROJECT_ROOT)))
 
     return image_data
 
 
-def extract_images_from_docx(docx_path):
+def extract_images_from_docx(docx_path, subfolder_name):
     """Extract images from a DOCX file with their order of appearance."""
     document = docx_Document(docx_path)
-    base_dir = os.path.join(ROOT_DIR, os.path.splitext(
+    base_dir = os.path.join(ROOT_DIR, subfolder_name, os.path.splitext(
         os.path.basename(docx_path))[0] + "_images")
     os.makedirs(base_dir, exist_ok=True)
     image_data = []
@@ -151,14 +160,18 @@ def extract_images_from_docx(docx_path):
             img_path = os.path.join(base_dir, f"image_{i + 1}.png")
             with open(img_path, "wb") as f:
                 f.write(document.part.rels[rel].target_part.blob)
-            image_data.append((i + 1, os.path.relpath(img_path, ROOT_DIR)))
+            image_data.append((i + 1, os.path.relpath(img_path, PROJECT_ROOT)))
 
     return image_data
 
 
 def load_documents(file_paths, describe_image_callback=None, debug_print=False, is_rate_limit=False):
     """Load multiple documents from various formats into a single list of documents with metadata."""
+    if not file_paths:
+        return []
+
     text_docs = []
+    subfolder_name = os.path.basename(os.path.commonpath(file_paths))
 
     for file_path in file_paths:
         if not os.path.exists(file_path):
@@ -174,10 +187,11 @@ def load_documents(file_paths, describe_image_callback=None, debug_print=False, 
         if file_type == 'document':
             if ext == 'pdf':
                 loader = PyPDFLoader(file_path)
-                image_data = extract_images_from_pdf(file_path)
+                image_data = extract_images_from_pdf(file_path, subfolder_name)
             elif ext == 'docx':
                 loader = Docx2txtLoader(file_path)
-                image_data = extract_images_from_docx(file_path)
+                image_data = extract_images_from_docx(
+                    file_path, subfolder_name)
             elif ext in ['txt', 'py', 'csv', 'json', 'xml', 'html', 'css', 'js', 'ts', 'c', 'cpp', 'java', 'kt', 'swift']:
                 loader = TextLoader(file_path)
 
@@ -208,6 +222,7 @@ def load_documents(file_paths, describe_image_callback=None, debug_print=False, 
 
                 if is_rate_limit:
                     # Rate limit is 20 requests per minute, so we sleep for 3 - (t1 - t0) seconds wiwth 0.2 for error margin
+                    # Ey why not working
                     time.sleep(3.2 - (t1 - t0))
                     t0 = time.time()
 

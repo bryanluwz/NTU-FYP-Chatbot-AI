@@ -6,8 +6,8 @@ from dotenv import dotenv_values
 
 from src.functions import list_all_files
 from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME, VECTOR_STORE_PATH, create_stt_model, create_tts_model
-from src.TTS_Model import TTS_Model_Map
-from src.TTS_Model_API import TTS_Model_Map as TTS_API_Model_Map
+from src.TTS_Model import TTS_Model_Map, TTS_Model
+from src.TTS_Model_API import TTS_Model_Map as TTS_API_Model_Map, TTS_Model_API
 
 config = dotenv_values(".env")
 chat_config = {"debug": False, "api_mode": False}
@@ -92,8 +92,9 @@ def query():
 
     if qa_model is None:
         print(
-            f"[!] Creating RAG model... Debug: {chat_config.get('debug', False)}")
-        qa_model = create_rag_model(debug=chat_config.get("debug", False))
+            f"[!] Creating RAG model... Debug: {chat_config.get('debug', False)}, API Mode: {chat_config.get('api_mode', False)}")
+        qa_model = create_rag_model(debug=chat_config.get(
+            "debug", False), api_mode=chat_config.get("api_mode", False))
 
     if document_src_name is None:
         raise ValueError("documentSrc is not set")
@@ -188,8 +189,9 @@ def transferDocumentSrc():
 
         if qa_model is None:
             print(
-                f"[!] Creating RAG model... Debug: {chat_config.get('debug', False)}")
-            qa_model = create_rag_model(debug=chat_config.get("debug", False))
+                f"[!] Creating RAG model... Debug: {chat_config.get('debug', False)}, API Mode: {chat_config.get('api_mode', False)}")
+            qa_model = create_rag_model(debug=chat_config.get(
+                "debug", False), api_mode=chat_config.get("api_mode", False))
 
         vector_store_path = os.path.join(
             VECTOR_STORE_PATH, f"{document_src_name}_{qa_model.embeddings.model_name}")
@@ -230,11 +232,15 @@ def tts():
 
     if tts_model is None:
         print(
-            f"[!] Creating TTS model... Debug: {chat_config.get('debug', False)}")
-        tts_model = create_tts_model(debug=chat_config.get("debug", False))
+            f"[!] Creating TTS model... Debug: {chat_config.get('debug', False)}, API Mode: {chat_config.get('api_mode', False)}")
+        tts_model = create_tts_model(debug=chat_config.get(
+            "debug", False), api_mode=chat_config.get("api_mode", False))
 
     # TTS
-    file_path = tts_model.tts(voice, TTS_MODEL_PATH, text)
+    if isinstance(tts_model, TTS_Model):
+        file_path = tts_model.tts(voice, TTS_MODEL_PATH, text)
+    elif isinstance(tts_model, TTS_Model_API):
+        file_path = tts_model.tts(voice, text)
 
     @after_this_request
     def remove_file(response):
@@ -264,8 +270,9 @@ def stt():
 
     if stt_model is None:
         print(
-            f"[!] Creating STT model... Debug: {chat_config.get('debug', False)}")
-        stt_model = create_stt_model(debug=chat_config.get("debug", False))
+            f"[!] Creating STT model... Debug: {chat_config.get('debug', False)}, API Mode: {chat_config.get('api_mode', False)}")
+        stt_model = create_stt_model(debug=chat_config.get(
+            "debug", False), api_mode=chat_config.get("api_mode", False))
 
     # STT
     text = stt_model.stt(audio)
