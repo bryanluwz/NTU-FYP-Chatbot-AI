@@ -254,7 +254,7 @@ def load_documents(file_paths, describe_image_callback=None, debug_print=False, 
                 if is_rate_limit:
                     # Rate limit is 20 requests per minute, so we sleep for 3 - (t1 - t0) seconds wiwth 0.2 for error margin
                     # Ey why not working
-                    time.sleep(3.2 - (t1 - t0))
+                    time.sleep(max(0.1, 3.2 - (t1 - t0)))
                     t0 = time.time()
 
             # Link images to text by page/order

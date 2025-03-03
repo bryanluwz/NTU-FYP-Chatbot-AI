@@ -302,4 +302,13 @@ def query_voices():
 
 def post_query_image():
     filename = request.form.get("filename")
-    return send_file(os.path.join(filename), as_attachment=True)
+    filename = filename.replace("\\", os.sep) # stupid thing waste my hour
+    try:
+        return send_file(os.path.join(filename), as_attachment=True)
+    except Exception as e:
+        # Try to remove the 'app' part
+        try:
+            new_path = filename.replace("app/", "")
+            return send_file(new_path, as_attachment=True)
+        except Exception as f:
+            raise Exception(new_path)
