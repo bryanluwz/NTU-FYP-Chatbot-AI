@@ -2,8 +2,8 @@ import time
 from docx import Document as docx_Document
 import fitz
 import os
-
-import fitz  # PyMuPDF
+from PIL import Image
+import io
 from langchain_core.documents import Document
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
 
@@ -118,6 +118,11 @@ ROOT_DIR = os.path.abspath(os.path.join(
 PROJECT_ROOT = os.path.abspath(os.path.join(
     FILE_DIR, ".."))  # Move up to /project-root
 
+IMAGE_MIN_WIDTH = 200
+IMAGE_MIN_HEIGHT = 200
+IMAGE_MIN_RATIO = 0.5
+IMAGE_MAX_RATIO = 2.0
+
 
 def extract_images_from_pdf(pdf_path, subfolder_name):
     """Extract images from a PDF and return a list of (page_number, image_path)."""
@@ -132,9 +137,20 @@ def extract_images_from_pdf(pdf_path, subfolder_name):
         images = page.get_images(full=True)
         for img_index, img in enumerate(images):
             xref = img[0]
+
             base_image = doc.extract_image(xref)
             img_data = base_image["image"]
             img_ext = base_image["ext"]
+
+            width, height = base_image["width"], base_image["height"]
+
+            # Calculate aspect ratio (width / height)
+            aspect_ratio = width / height
+
+            # Ignore small images & those with extreme aspect ratios
+            if width < IMAGE_MIN_WIDTH or height < IMAGE_MIN_HEIGHT or not (IMAGE_MIN_RATIO <= aspect_ratio <= IMAGE_MAX_RATIO):
+                continue
+
             img_filename = f"page_{page_num + 1}_img_{img_index + 1}.{img_ext}"
             img_path = os.path.join(base_dir, img_filename)
 
@@ -155,12 +171,27 @@ def extract_images_from_docx(docx_path, subfolder_name):
     os.makedirs(base_dir, exist_ok=True)
     image_data = []
 
-    for i, rel in enumerate(document.part.rels):
+    img_index = 0
+
+    for rel in document.part.rels:
         if "image" in document.part.rels[rel].target_ref:
-            img_path = os.path.join(base_dir, f"image_{i + 1}.png")
-            with open(img_path, "wb") as f:
-                f.write(document.part.rels[rel].target_part.blob)
-            image_data.append((i + 1, os.path.relpath(img_path, PROJECT_ROOT)))
+            img_blob = document.part.rels[rel].target_part.blob
+
+            # Open image with PIL
+            img = Image.open(io.BytesIO(img_blob))
+            width, height = img.size
+            aspect_ratio = width / height
+
+            # Ignore small images & those with extreme aspect ratios
+            if width < IMAGE_MIN_WIDTH or height < IMAGE_MIN_HEIGHT or not (IMAGE_MIN_RATIO <= aspect_ratio <= IMAGE_MAX_RATIO):
+                continue
+
+            img_index += 1  # Only count valid images
+            img_path = os.path.join(base_dir, f"image_{img_index}.png")
+            img.save(img_path)
+
+            image_data.append(
+                (img_index, os.path.relpath(img_path, PROJECT_ROOT)))
 
     return image_data
 
