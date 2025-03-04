@@ -1,0 +1,19 @@
+FROM python:3.10-slim-buster
+
+# Install dependencies, clean up apt cache to reduce image size
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the requirements file and install Python dependencies
+COPY requirements.smol.txt /app/
+RUN pip install --no-cache-dir -r requirements.smol.txt
+
+# Copy the rest of the application files
+COPY . /app/
+
+# Set the default command to run the app
+CMD ["python3", "app.py", "--debug", "--api-mode"]

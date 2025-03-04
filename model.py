@@ -62,39 +62,37 @@ os.makedirs(DOCUMENT_PARENT_DIR_PATH, exist_ok=True)
 
 
 HUGGINGFACE_TOKEN = None
-if os.path.exists("/run/secrets/hf_token"):
-    with open("/run/secrets/hf_token") as f:
-        print("[+] Found Huggingface token in secrets: /run/secrets/hf_token")
-        HUGGINGFACE_TOKEN = f.read().strip()
-else:
-    print("[!] Huggingface token not found in secrets: /run/secrets/hf_token, using the .env file")
-    HUGGINGFACE_TOKEN = config.get('HUGGINGFACE_TOKEN', None)
-
 TOGETHER_API_KEY = None
-if os.path.exists("/run/secrets/together_api_key"):
-    with open("/run/secrets/together_api_key") as f:
-        print("[+] Found Together API key in secrets: /run/secrets/together_api_key")
-        TOGETHER_API_KEY = f.read().strip()
+
+if os.path.exists("/run/secrets/rag_tokens"):
+    with open("/run/secrets/rag_tokens") as f:
+        print("[+] Found RAG tokens in secrets: /run/secrets/rag_tokens")
+        lines = f.readlines()
+        if len(lines) >= 2:
+            HUGGINGFACE_TOKEN = lines[0].strip()
+            TOGETHER_API_KEY = lines[1].strip()
+        else:
+            raise Exception("[!] RAG tokens file is malformed: /run/secrets/rag_tokens")
 else:
-    print("[!] Together API key not found in secrets: /run/secrets/together_api_key, using the .env file")
+    print("[!] RAG tokens not found in secrets: /run/secrets/rag_tokens, using the .env file")
+    HUGGINGFACE_TOKEN = config.get('HUGGINGFACE_TOKEN', None)
     TOGETHER_API_KEY = config.get('TOGETHER_API_KEY', None)
 
 AZURE_API_ENDPOINT = None
-if os.path.exists("/run/secrets/azure_api_endpoint"):
-    with open("/run/secrets/azure_api_endpoint") as f:
-        print("[+] Found Azure API endpoint in secrets: /run/secrets/azure_api_endpoint")
-        AZURE_API_ENDPOINT = f.read().strip()
-else:
-    print("[!] Azure API endpoint not found in secrets: /run/secrets/azure_api_endpoint, using the .env file")
-    AZURE_API_ENDPOINT = config.get('AZURE_API_ENDPOINT', None)
-
 AZURE_API_KEY = None
-if os.path.exists("/run/secrets/azure_api_key"):
-    with open("/run/secrets/azure_api_key") as f:
-        print("[+] Found Azure API key in secrets: /run/secrets/azure_api_key")
-        AZURE_API_KEY = f.read().strip()
+
+if os.path.exists("/run/secrets/azure_api"):
+    with open("/run/secrets/azure_api") as f:
+        print("[+] Found Azure API credentials in secrets: /run/secrets/azure_api")
+        lines = f.readlines()
+        if len(lines) >= 2:
+            AZURE_API_ENDPOINT = lines[0].strip()
+            AZURE_API_KEY = lines[1].strip()
+        else:
+            raise Exception("[!] Azure API credentials file is malformed: /run/secrets/azure_api")
 else:
-    print("[!] Azure API key not found in secrets: /run/secrets/azure_api_key, using the .env file")
+    print("[!] Azure API credentials not found in secrets: /run/secrets/azure_api, using the .env file")
+    AZURE_API_ENDPOINT = config.get('AZURE_API_ENDPOINT', None)
     AZURE_API_KEY = config.get('AZURE_API_KEY', None)
 
 
