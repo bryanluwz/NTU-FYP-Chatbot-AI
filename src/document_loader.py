@@ -280,6 +280,7 @@ def load_documents(file_paths, describe_image_callback=None, debug_print=False, 
                 print(
                     f"🖼️ Created {len(image_docs)} images and {len(text_docs)} text Document objects")
         elif file_type == 'image':
+            continue
             if describe_image_callback is not None:
                 description = describe_image_callback(file_path)
                 if "text" in description and "description" in description:
