@@ -3,15 +3,9 @@ This file contains all the RAG model stuffs
 """
 import os
 from dotenv import dotenv_values
-import torch
-
-# Set torch to use the GPU memory at 80% capacity
-if torch.cuda.is_available():
-    print("[+] GPU found lessgoo..., setting memory fraction to 80%")
-    torch.cuda.set_per_process_memory_fraction(0.8)
-else:
-    print("[!] GPU not found, using CPU... sadge")
-
+from src.RAG_Model_API import RAG_Model_API
+from src.TTS_Model_API import TTS_Model_API
+from src.STT_Model_API import STT_Model_API
 
 # Config
 config = dotenv_values(".env")
@@ -72,7 +66,8 @@ if os.path.exists("/run/secrets/rag_tokens"):
             HUGGINGFACE_TOKEN = lines[0].strip()
             TOGETHER_API_KEY = lines[1].strip()
         else:
-            raise Exception("[!] RAG tokens file is malformed: /run/secrets/rag_tokens")
+            raise Exception(
+                "[!] RAG tokens file is malformed: /run/secrets/rag_tokens")
 else:
     print("[!] RAG tokens not found in secrets: /run/secrets/rag_tokens, using the .env file")
     HUGGINGFACE_TOKEN = config.get('HUGGINGFACE_TOKEN', None)
@@ -89,7 +84,8 @@ if os.path.exists("/run/secrets/azure_api"):
             AZURE_API_ENDPOINT = lines[0].strip()
             AZURE_API_KEY = lines[1].strip()
         else:
-            raise Exception("[!] Azure API credentials file is malformed: /run/secrets/azure_api")
+            raise Exception(
+                "[!] Azure API credentials file is malformed: /run/secrets/azure_api")
 else:
     print("[!] Azure API credentials not found in secrets: /run/secrets/azure_api, using the .env file")
     AZURE_API_ENDPOINT = config.get('AZURE_API_ENDPOINT', None)
@@ -114,44 +110,23 @@ else:
 
 
 def create_rag_model(debug=False, api_mode=False):
-    if not api_mode:
-        from src.RAG_Model import RAG_Model
-
-        print("[!] API mode is not enabled, using the LLM module in local mode")
-        qa_model = RAG_Model(debug=debug, huggingface_token=HUGGINGFACE_TOKEN)
-        qa_model.load_embeddings_model(EMBEDDING_NAME, EMBEDDING_MODEL_PATH)
-        qa_model.initialize_cross_encoder(
-            model_name=CROSS_ENCODER_NAME, model_path=CROSS_ENCODER_MODEL_PATH)
-        qa_model.initialize_llm(model_name=LLM_MODEL_NAME,
-                                max_new_tokens=512, model_path=LLM_MODEL_PATH, temperature=0.8, task=LLM_TASK)
-        qa_model.initialize_image_pipeline(model_name=BLIP_MODEL_NAME,
-                                           model_path=BLIP_MODEL_PATH, task=BLIP_TASK)
-        return qa_model
-    else:
-        from src.RAG_Model_API import RAG_Model_API
-        print("[!] API mode is enabled, using the LLM module in API mode")
-        qa_model = RAG_Model_API(
-            debug=debug, together_api_key=TOGETHER_API_KEY, azure_api_key=AZURE_API_KEY, azure_api_endpoint=AZURE_API_ENDPOINT)
-        qa_model.load_embeddings_model(EMBEDDING_NAME, EMBEDDING_MODEL_PATH)
-        qa_model.initialize_cross_encoder(
-            model_name=CROSS_ENCODER_NAME, model_path=CROSS_ENCODER_MODEL_PATH)
-        qa_model.initialize_llm(model_name="meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
-                                max_new_tokens=512, temperature=0.8)
-        qa_model.initialize_image_pipeline()
-        return qa_model
+    print("[!] API mode is enabled, using the LLM module in API mode")
+    qa_model = RAG_Model_API(
+        debug=debug, together_api_key=TOGETHER_API_KEY, azure_api_key=AZURE_API_KEY, azure_api_endpoint=AZURE_API_ENDPOINT)
+    qa_model.load_embeddings_model(EMBEDDING_NAME, EMBEDDING_MODEL_PATH)
+    qa_model.initialize_cross_encoder(
+        model_name=CROSS_ENCODER_NAME, model_path=CROSS_ENCODER_MODEL_PATH)
+    qa_model.initialize_llm(model_name="meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
+                            max_new_tokens=512, temperature=0.8)
+    qa_model.initialize_image_pipeline()
+    return qa_model
 
 
 def create_tts_model(debug=False, api_mode=False):
-    if not api_mode:
-        from src.TTS_Model import TTS_Model
-        print("[!] API mode is not enabled, using the TTS module in local mode")
-        tts_model = TTS_Model(debug=debug)
-    else:
-        from src.TTS_Model_API import TTS_Model_API
-        print("[!] API mode is enabled, using the TTS module in API mode")
-        tts_model = TTS_Model_API(
-            debug=debug, tts_api_key=GOOGLE_CLOUD_API_KEY)
-        tts_model.initialise_tts()
+    print("[!] API mode is enabled, using the TTS module in API mode")
+    tts_model = TTS_Model_API(
+        debug=debug, tts_api_key=GOOGLE_CLOUD_API_KEY)
+    tts_model.initialise_tts()
     return tts_model
 
 
@@ -163,15 +138,8 @@ STT_MODEL_NAME = 'openai/whisper-small.en'
 
 
 def create_stt_model(debug=False, api_mode=False):
-    if not api_mode:
-        from src.STT_Model import STT_Model
-        print("[!] API mode is not enabled, using the STT module in local mode")
-        stt_model = STT_Model(debug=debug)
-        stt_model.initialise_stt(STT_MODEL_NAME, STT_MODEL_PATH)
-    else:
-        from src.STT_Model_API import STT_Model_API
-        print("[!] API mode is enabled, using the STT module in API mode")
-        stt_model = STT_Model_API(
-            debug=debug, stt_api_key=GOOGLE_CLOUD_API_KEY)
-        stt_model.initialise_stt()
+    print("[!] API mode is enabled, using the STT module in API mode")
+    stt_model = STT_Model_API(
+        debug=debug, stt_api_key=GOOGLE_CLOUD_API_KEY)
+    stt_model.initialise_stt()
     return stt_model

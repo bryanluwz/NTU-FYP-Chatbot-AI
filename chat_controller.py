@@ -6,8 +6,7 @@ from dotenv import dotenv_values
 
 from src.functions import list_all_files
 from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME, VECTOR_STORE_PATH, create_stt_model, create_tts_model
-from src.TTS_Model import TTS_Model_Map, TTS_Model
-from src.TTS_Model_API import TTS_Model_Map as TTS_API_Model_Map, TTS_Model_API
+from src.TTS_Model_API import TTS_Model_Map as TTS_API_Model_Map
 
 config = dotenv_values(".env")
 chat_config = {"debug": False, "api_mode": False}
@@ -47,8 +46,8 @@ def get_document_dir_path(document_parent_dir_path=DOCUMENT_PARENT_DIR_PATH, doc
     if document_dir_name is None:
         raise ValueError("DOCUMENT_PARENT_DIR_PATH is not set")
 
-    return (os.path.join(
-        document_parent_dir_path, document_dir_name))
+    return (os.path.normpath(os.path.join(
+        document_parent_dir_path, document_dir_name)))
 
 
 """
@@ -237,10 +236,7 @@ def tts():
             "debug", False), api_mode=chat_config.get("api_mode", False))
 
     # TTS
-    if isinstance(tts_model, TTS_Model):
-        file_path = tts_model.tts(voice, TTS_MODEL_PATH, text)
-    elif isinstance(tts_model, TTS_Model_API):
-        file_path = tts_model.tts(voice, text)
+    file_path = tts_model.tts(voice, text)
 
     @after_this_request
     def remove_file(response):
@@ -284,15 +280,9 @@ def stt():
 
 
 def query_voices():
-    local_voices = TTS_Model_Map.model_map
     api_voices = TTS_API_Model_Map.model_map
 
-    voices = None
-
-    if chat_config.get("api_mode", False):
-        voices = api_voices.keys()
-    else:
-        voices = local_voices.keys()
+    voices = api_voices.keys()
 
     return jsonify({
         "success": True,
@@ -302,7 +292,7 @@ def query_voices():
 
 def post_query_image():
     filename = request.form.get("filename")
-    filename = filename.replace("\\", os.sep) # stupid thing waste my hour
+    filename = filename.replace("\\", os.sep)  # stupid thing waste my hour
     try:
         return send_file(os.path.join(filename), as_attachment=True)
     except Exception as e:
