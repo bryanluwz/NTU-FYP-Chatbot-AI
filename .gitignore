@@ -15,3 +15,5 @@ tesseract
 
 server.cert
 server.key
+
+**/**/test.*

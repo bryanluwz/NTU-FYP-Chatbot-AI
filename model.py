@@ -21,7 +21,7 @@ BLIP_TASK = 'image-to-text'
 
 CROSS_ENCODER_NAME = 'cross-encoder/ms-marco-MiniLM-L-12-v2'
 
-EMBEDDING_NAME = 'sentence-transformers/paraphrase-MiniLM-L6-v2'
+EMBEDDING_NAME = 'text-embedding-ada-002'
 
 EMBEDDING_MODEL_PATH = os.path.abspath(config.get(
     'EMBEDDING_MODEL_PATH', './models/embedding_model'))
@@ -75,14 +75,18 @@ else:
 
 AZURE_API_ENDPOINT = None
 AZURE_API_KEY = None
+AZURE_OPENAI_ENDPOINT = None
+AZURE_OPENAI_API_KEY = None
 
 if os.path.exists("/run/secrets/azure_api"):
     with open("/run/secrets/azure_api") as f:
         print("[+] Found Azure API credentials in secrets: /run/secrets/azure_api")
         lines = f.readlines()
-        if len(lines) >= 2:
+        if len(lines) >= 4:
             AZURE_API_ENDPOINT = lines[0].strip()
             AZURE_API_KEY = lines[1].strip()
+            AZURE_OPENAI_ENDPOINT = lines[2].strip()
+            AZURE_OPENAI_API_KEY = lines[3].strip()
         else:
             raise Exception(
                 "[!] Azure API credentials file is malformed: /run/secrets/azure_api")
@@ -90,6 +94,8 @@ else:
     print("[!] Azure API credentials not found in secrets: /run/secrets/azure_api, using the .env file")
     AZURE_API_ENDPOINT = config.get('AZURE_API_ENDPOINT', None)
     AZURE_API_KEY = config.get('AZURE_API_KEY', None)
+    AZURE_OPENAI_ENDPOINT = config.get('AZURE_OPENAI_ENDPOINT', None)
+    AZURE_OPENAI_API_KEY = config.get('AZURE_OPENAI_API_KEY', None)
 
 
 GOOGLE_CLOUD_API_KEY = None
@@ -112,10 +118,10 @@ else:
 def create_rag_model(debug=False, api_mode=False):
     print("[!] API mode is enabled, using the LLM module in API mode")
     qa_model = RAG_Model_API(
-        debug=debug, together_api_key=TOGETHER_API_KEY, azure_api_key=AZURE_API_KEY, azure_api_endpoint=AZURE_API_ENDPOINT)
-    qa_model.load_embeddings_model(EMBEDDING_NAME, EMBEDDING_MODEL_PATH)
-    qa_model.initialize_cross_encoder(
-        model_name=CROSS_ENCODER_NAME, model_path=CROSS_ENCODER_MODEL_PATH)
+        debug=debug, together_api_key=TOGETHER_API_KEY, azure_api_key=AZURE_API_KEY,
+        azure_api_endpoint=AZURE_API_ENDPOINT, azure_openai_api_key=AZURE_OPENAI_API_KEY,
+        azure_openai_endpoint=AZURE_OPENAI_ENDPOINT)
+    qa_model.load_embeddings_model(EMBEDDING_NAME)
     qa_model.initialize_llm(model_name="meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
                             max_new_tokens=512, temperature=0.8)
     qa_model.initialize_image_pipeline()

@@ -5,7 +5,7 @@ import zipfile
 from dotenv import dotenv_values
 
 from src.functions import list_all_files
-from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME, VECTOR_STORE_PATH, create_stt_model, create_tts_model
+from model import create_rag_model, DOCUMENT_PARENT_DIR_PATH, DOCUMENT_DIR_NAME, VECTOR_STORE_PATH, create_stt_model, create_tts_model, EMBEDDING_NAME
 from src.TTS_Model_API import TTS_Model_Map as TTS_API_Model_Map
 
 config = dotenv_values(".env")
@@ -100,7 +100,7 @@ def query():
 
     document_dir_name = document_src_name
     vector_store_path = os.path.join(
-        VECTOR_STORE_PATH, f"{document_dir_name}_{qa_model.embeddings.model_name}")
+        VECTOR_STORE_PATH, f"{document_dir_name}_{EMBEDDING_NAME}")
 
     # Load vector store when necessary
     if qa_model.vector_store is None or qa_model.vector_store_path is None or qa_model.vector_store_path != vector_store_path:
@@ -193,7 +193,7 @@ def transferDocumentSrc():
                 "debug", False), api_mode=chat_config.get("api_mode", False))
 
         vector_store_path = os.path.join(
-            VECTOR_STORE_PATH, f"{document_src_name}_{qa_model.embeddings.model_name}")
+            VECTOR_STORE_PATH, f"{document_src_name}_{EMBEDDING_NAME}")
         shutil.rmtree(vector_store_path, ignore_errors=True)
 
         # Force create new vector store

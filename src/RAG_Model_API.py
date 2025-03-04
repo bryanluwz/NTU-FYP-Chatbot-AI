@@ -14,7 +14,6 @@ import faiss
 
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_core.documents.base import Document
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
 from together import Together
@@ -30,10 +29,10 @@ from .document_loader import load_documents
 from rank_bm25 import BM25Okapi
 from sklearn.metrics.pairwise import cosine_similarity
 
-from transformers import pipeline
 
 from .document_loader import load_documents
 from src.Base_AI_Model import BaseModel
+from openai import AzureOpenAI
 
 
 def _softmax(scores, temperature=0.5):
@@ -47,21 +46,24 @@ def _softmax(scores, temperature=0.5):
 class RAG_Model_API(BaseModel):
     """Notice how this class is a subclass of RAG_Model, very saving re-implementing stuffs, very mindful, very demure"""
 
-    def __init__(self, debug=False, device=None, together_api_key=None, azure_api_endpoint=None, azure_api_key=None, hf_hub_api_key=None):
+    def __init__(self, debug=False, device=None, together_api_key=None, azure_api_endpoint=None, azure_api_key=None, hf_hub_api_key=None, azure_openai_endpoint=None, azure_openai_api_key=None):
         super().__init__(debug=debug)
-        self.embeddings = None
+        self.embeddings_model = None
+        self.embeddings_pipeline = None
+        self.azure_openai_endpoint = azure_openai_endpoint
+        self.azure_openai_api_key = azure_openai_api_key
+
         self.vector_store = None
         self.vector_store_path = None
 
         self.llm_pipeline = None
         self.llm_pipeline_kwargs = None
-        self.image_pipeline = None
         self.together_api_key = together_api_key
+
+        self.image_pipeline = None
         self.azure_api_endpoint = azure_api_endpoint
         self.azure_api_key = azure_api_key
         self.hf_hub_api_key = hf_hub_api_key
-
-        self.cross_encoder = None
 
         self.debug = debug
         self.device = device or 0
@@ -122,47 +124,22 @@ class RAG_Model_API(BaseModel):
 
         return docs
 
-    def _compute_text_similarity(self, text1: str, text2: str) -> float:
-        """
-        Compute cosine similarity between two text strings using embeddings.
-        """
-        assert self.embeddings is not None, "Embeddings model not initialized."
-
-        # Convert texts to embeddings
-        text1_embedding = self.embeddings.embed_query(text1)
-        text2_embedding = self.embeddings.embed_query(text2)
-
-        # Compute cosine similarity
-        similarity = cosine_similarity(
-            np.array(text1_embedding).reshape(1, -1),
-            np.array(text2_embedding).reshape(1, -1)
-        )[0][0]
-
-        return similarity
-
     def _get_page_content(self, documents: list[Document]):
         """
         Strip metadata from the documents.
         """
         return [f"Page {doc.metadata.get('page', 'N/A')}: {doc.page_content}" for doc in documents]
 
-    def load_embeddings_model(self, model_name: str = "paraphrase-MiniLM-L6-v2", embedding_model_path: str = "embedding_models"):
-        """Initialize HuggingFace embeddings."""
-        # Check if the model already exists in the cache
-        # TODO: load faster without internet why?
-        local_model_path = os.path.join(
-            embedding_model_path, model_name)
-
-        os.makedirs(local_model_path, exist_ok=True)
-
-        # Load the embeddings model from the cache directory or download it
-        # NOTE: Cache got problem, so no cache in local model path. why? idk
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=model_name, show_progress=False)
+    def load_embeddings_model(self, model_name: str = "text-embedding-ada-002"):
+        """Initialize embeddings."""
+        self.embeddings_model = AzureOpenAI(
+            api_key=self.azure_openai_api_key, api_version="2024-06-01", azure_endpoint=self.azure_openai_endpoint)
+        self.embeddings_pipeline = lambda text: self.embeddings_model.embeddings.create(
+            input=text, model=model_name).data[0].embedding
 
     def load_vector_store(self, vector_store_path: str = "vector_store/<your_vector_store_name>", file_paths=[]):
         """Load the FAISS vector store if it exists."""
-        assert self.embeddings is not None, "Embeddings model not initialized."
+        assert self.embeddings_model is not None and self.embeddings_pipeline is not None, "Embeddings model not initialized."
 
         try:
             faiss_index_path = os.path.join(vector_store_path, "index.faiss")
@@ -171,22 +148,20 @@ class RAG_Model_API(BaseModel):
             if os.path.exists(faiss_index_path) and os.path.exists(faiss_pkl_path):
                 # Load persisted vector store
                 persisted_vectorstore = FAISS.load_local(
-                    vector_store_path, self.embeddings, allow_dangerous_deserialization=True)
+                    vector_store_path, self.embeddings_pipeline, allow_dangerous_deserialization=True)
                 print("✅ Loaded vector store from local storage.")
                 self.vector_store = persisted_vectorstore
-
                 self.vector_store_path = vector_store_path
 
             else:
                 raise FileNotFoundError
         except FileNotFoundError:
             self.vector_store = None
-            self.create_and_save_vector_store(
-                vector_store_path, file_paths)
+            self.create_and_save_vector_store(vector_store_path, file_paths)
 
     def create_and_save_vector_store(self, vector_store_path, file_paths):
         """Create a new FAISS vector store from the given PDF and save it."""
-        assert self.embeddings is not None, "Embeddings model not initialized."
+        assert self.embeddings_model is not None, "Embeddings model not initialized."
 
         self._debug_print(
             "⚠️ Creating a new vector store, if one already exists it will be overwritten.")
@@ -209,9 +184,14 @@ class RAG_Model_API(BaseModel):
             separator="\n"
         )
         docs = text_splitter.split_documents(documents)
+        doc_texts = [doc.page_content for doc in docs]
+
+        embeddings = [self.embeddings_pipeline(
+            doc.page_content) for doc in docs]
 
         # Create vectors using FAISS
-        vectorstore = FAISS.from_documents(docs, self.embeddings)
+        vectorstore = FAISS.from_embeddings(
+            zip(doc_texts, embeddings), self.embeddings_pipeline)
 
         # Persist the vectors locally on disk
         vectorstore.save_local(vector_store_path)
@@ -270,43 +250,11 @@ class RAG_Model_API(BaseModel):
         )
         self.image_pipeline = client
 
-    def initialize_cross_encoder(self, model_name: str = 'cross-encoder/ms-marco-MiniLM-L-6-v2', model_path: str = None):
-        """
-        Initialize the cross encoder model for ranking documents.
-        """
-        model_save_path = os.path.join(model_path, model_name)
-
-        # Check if the model is already saved
-        if os.path.exists(model_save_path):
-            print(f"🔄 Loading cross-encoder model from {model_save_path}...")
-            reranker_pipeline = pipeline(
-                task="text-classification",
-                model=model_save_path,
-                tokenizer=model_save_path,
-            )
-        else:
-            # Get the model size before downloading
-            print(
-                f"⬇️ Downloading and saving cross-encoder model '{model_name}' to {model_save_path}...")
-            reranker_pipeline = pipeline(
-                task="text-classification",
-                model=model_name,
-                tokenizer=model_name,
-            )
-
-            # Save the model
-            reranker_pipeline.save_pretrained(model_save_path)
-            print(
-                f"✅ Cross-encoder model '{model_name}' saved to {model_save_path}.")
-
-        self.cross_encoder = reranker_pipeline
-
     def _preretrieval_query_formatting(self, query: str):
         """
         Preretrieval
         """
         assert self.llm_pipeline is not None, "LLM pipeline not initialized."
-        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
 
         self._debug_print("[!] Pre-retrieval - Query reformulating...")
 
@@ -348,18 +296,17 @@ class RAG_Model_API(BaseModel):
         """
         assert self.vector_store is not None, "Vector store not initialized."
         assert self.llm_pipeline is not None, "LLM pipeline not initialized."
-        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
 
         self._debug_print(
             "[!] Retrieval - Searching, filtering and ranking for relevant documents...")
 
         # Pass context to the vector store for retrieval
-        # k = 10 for sparse retrieval, then passed to filtering for better retreival
+        # k = idk for sparse retrieval, then passed to filtering for better retreival
         full_query = "\n".join([q for q in query])
         reformulated_queries = full_query.split("\n")
 
         context = [self.vector_store.similarity_search(
-            q, k=20) for q in reformulated_queries]
+            q, k=max(1, 20 // len(reformulated_queries))) for q in reformulated_queries]
         flattened_context = [doc for sublist in context for doc in sublist]
         filtered_context = self._filter_and_rerank_context(
             flattened_context, full_query)
@@ -368,10 +315,10 @@ class RAG_Model_API(BaseModel):
 
     def _filter_and_rerank_context(self, context: list[Document], query: str, num_return=4):
         """
+        FUCK THIS FUNCTION
         Use BM25, dense retrieval, and cross-encoder reranking to filter and rank relevant documents.
         """
-        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
-
+        return context
         if not context:
             return []
 
@@ -387,21 +334,27 @@ class RAG_Model_API(BaseModel):
         bm25_scores = bm25.get_scores(query.split())
 
         # Get top-k BM25 docs
-        bm25_top_k = 10  # Adjust this if needed
+        bm25_top_k = 4  # Adjust this if needed
         bm25_top_indices = np.argsort(bm25_scores)[::-1][:bm25_top_k]
         bm25_top_docs = [context[i] for i in bm25_top_indices]
 
         # ---- STEP 2: Dense Retrieval (FAISS) ----
-        doc_embeddings = np.array(
-            [self.embeddings.embed_query(doc.page_content) for doc in context])
-        dimension = doc_embeddings.shape[1]
+        # Instead of recalculating embeddings, use the ones from the vector store
+        # Get pre-stored embeddings from the vector store
+        doc_embeddings = [doc.embedding for doc in context]
+        # Assuming all embeddings have the same dimension
+        dimension = doc_embeddings[0].shape[0]
+
+        # Initialize FAISS index and add the pre-stored embeddings
         faiss_index = faiss.IndexFlatIP(dimension)
-        faiss_index.add(doc_embeddings)
+        # Add all embeddings to the FAISS index
+        faiss_index.add(np.array(doc_embeddings))
 
-        query_embedding = self.embeddings.embed_query(query)
+        # Get query embedding
+        query_embedding = self.embeddings_pipeline(query)
 
-        # Retrieve top-k dense matches
-        dense_top_k = 10  # Adjust as needed
+        # Perform FAISS search to retrieve top-k dense matches
+        dense_top_k = 4  # Adjust as needed
         _, indices = faiss_index.search(
             np.array([query_embedding]), dense_top_k)
         dense_top_docs = [context[i] for i in indices[0]]
@@ -417,9 +370,11 @@ class RAG_Model_API(BaseModel):
 
         # Compute scores again only for the merged set
         bm25_scores = np.array([bm25.get_scores(doc.page_content.split())[
-                               0] for doc in merged_docs])
-        dense_scores = np.array([faiss_index.search(np.array(
-            [self.embeddings.embed_query(doc.page_content)]), 1)[0][0][0] for doc in merged_docs])
+            0] for doc in merged_docs])
+
+        # Instead of recomputing embeddings, use the embeddings stored in context
+        dense_scores = np.array([
+            faiss_index.search(np.array([doc.embedding]), 1)[0][0][0] for doc in merged_docs])
 
         # ---- STEP 4: Hybrid Scoring (BM25 + Dense) ----
         bm25_scores = (bm25_scores - bm25_scores.min()) / \
@@ -438,14 +393,18 @@ class RAG_Model_API(BaseModel):
         )
 
         # ---- STEP 5: Cross-Encoder Reranking ----
-        query_doc_pairs = [{"text": self._truncate_text(
-            query, 256), "text_pair": self._truncate_text(doc.page_content, 256)} for doc in hybrid_top_docs]
-        scores = self.cross_encoder.predict(query_doc_pairs)
+        # Query embedding
+        query_embedding = self.embeddings_pipeline(query)
+
+        # Calculate similarity scores between the query and documents using their embeddings
+        scores = np.array([faiss_index.search(np.array([doc.embedding]), 1)[
+            0][0][0] for doc in hybrid_top_docs])
 
         # Filter based on LLM relevance threshold
         sorted_docs = sorted(
-            list(zip(hybrid_top_docs, scores)), key=lambda x: x[1]['score'], reverse=True)[:num_return]
+            list(zip(hybrid_top_docs, scores)), key=lambda x: x[1], reverse=True)[:num_return]
 
+        # Extract documents from the sorted results
         docs = [doc[0] for doc in sorted_docs]
 
         self._debug_print(
@@ -457,28 +416,33 @@ class RAG_Model_API(BaseModel):
     def _rank_relevant_images(self, images: list[dict], generated_response: str):
         """
         Rank relevant images based on the generated response and images description + text
-        Only with cross encoder
         Actually there's also some filtering here hmmm
         """
-        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
 
         # Merge description and text
         for image in images:
             image["content"] = image.pop(
                 "description") + " " + image.pop("text")
 
-        # Prepare query-image pairs
-        query_image_pairs = [{
-            "text": self._truncate_text(generated_response, 256),
-            "text_pair": self._truncate_text(image["content"], 256)
-        } for image in images]
+        # Make sure image embeddings and query embedding are 2D
+        # Ensure query_embedding and image_embeddings are 2D
+        query_embedding = self.embeddings_pipeline(
+            generated_response)
+        image_embeddings = [self.embeddings_pipeline(image["content"]).reshape(
+            1, -1) for image in images]  # Shape (1, feature_dim) for each image
 
-        scores = self.cross_encoder.predict(query_image_pairs)
+        # Compute cosine similarity
+        # Now this works, returns a 1D array of scores
+        scores = []
+        if len(image_embeddings) > 0:
+            scores = cosine_similarity([query_embedding], image_embeddings)
 
         if not scores or len(scores) == 0:
             return []
 
-        raw_scores = [score['score'] for score in scores]
+        raw_scores = scores[0]
+
+        self._debug_print(raw_scores)
 
         # Handle single image case
         if len(raw_scores) == 1:
@@ -497,6 +461,8 @@ class RAG_Model_API(BaseModel):
         # Apply softmax with temperature
         softmax_scores: list[float] = _softmax(raw_scores, temperature=0.1)
 
+        self._debug_print(softmax_scores)
+
         # Compute dynamic cutoff
         best_score = max(softmax_scores)
         # Dynamic threshold with small buffer
@@ -511,15 +477,6 @@ class RAG_Model_API(BaseModel):
         )
 
         return sorted_images
-
-    def _truncate_text(self, text: str, max_tokens: int = 512):
-        """
-        Truncate text to the maximum number of tokens.
-        """
-        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
-        tokens = self.cross_encoder.tokenizer.encode(
-            text, truncation=True, max_length=max_tokens)
-        return self.cross_encoder.tokenizer.decode(tokens)
 
     def _generation(self, query: str, context, attached_file_paths: list[str], chat_history: list[any] = []):
         """
@@ -655,7 +612,6 @@ class RAG_Model_API(BaseModel):
         """
         assert self.vector_store is not None, "Vector store not initialized."
         assert self.llm_pipeline is not None, "LLM pipeline not initialized."
-        assert self.cross_encoder is not None, "Cross-encoder model not initialized."
 
         self._debug_print("Querying the QA chain...")
 
