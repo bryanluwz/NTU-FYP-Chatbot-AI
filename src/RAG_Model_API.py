@@ -11,6 +11,7 @@ import os
 import shutil
 import numpy as np
 import faiss
+import re
 
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_core.documents.base import Document
@@ -145,6 +146,9 @@ class RAG_Model_API(BaseModel):
             faiss_index_path = os.path.join(vector_store_path, "index.faiss")
             faiss_pkl_path = os.path.join(vector_store_path, "index.pkl")
 
+            self._debug_print(
+                f"🔍 Loading vector index and pickle files from {faiss_index_path} and {faiss_pkl_path}..")
+
             if os.path.exists(faiss_index_path) and os.path.exists(faiss_pkl_path):
                 # Load persisted vector store
                 persisted_vectorstore = FAISS.load_local(
@@ -156,6 +160,8 @@ class RAG_Model_API(BaseModel):
             else:
                 raise FileNotFoundError
         except FileNotFoundError:
+            # raise FileNotFoundError(vector_store_path, faiss_index_path, faiss_pkl_path, os.path.exists(
+            #     faiss_index_path), os.path.exists(faiss_pkl_path))
             self.vector_store = None
             self.create_and_save_vector_store(vector_store_path, file_paths)
 
@@ -272,7 +278,7 @@ class RAG_Model_API(BaseModel):
             "You are tasked to reformulate the user's query to generate five similar words and phrases"
             "\n"
             "DO NOT answer the question, but ensure the reformulated query is relevant to the user's question. "
-            "ONLY return the related words and synonyms, without additional text and numberings. "
+            "ONLY return the related words and synonyms, without additional text and numberings, each in a new line. "
         )
 
         final_prompt = [
@@ -303,7 +309,7 @@ class RAG_Model_API(BaseModel):
         # Pass context to the vector store for retrieval
         # k = idk for sparse retrieval, then passed to filtering for better retreival
         full_query = "\n".join([q for q in query])
-        reformulated_queries = full_query.split("\n")
+        reformulated_queries = re.split(r'\n+', full_query)
 
         context = [self.vector_store.similarity_search(
             q, k=max(1, 20 // len(reformulated_queries))) for q in reformulated_queries]
