@@ -13,4 +13,4 @@ RUN pip install --prefer-binary --no-cache-dir -r requirements.txt
 COPY . /app/
 
 # Run the app (--debug if env var is set)
-CMD ["python3", "app.py", "--debug", "--api-mode"]
+CMD ["python3", "app.py", "--debug"]
