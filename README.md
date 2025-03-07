@@ -2,10 +2,6 @@
 
 This repository contains the AI server implementation for the NTU Final Year Project (FYP) Chatbot. This AI server is built using Python and Flask for processing chatbot logic. This AI server powers the chatbot's core functionalities, providing a seamless and intelligent user experience.
 
-## Warning
-
-I might have messed up some of the code trying to get the Docker setup to work. If you encounter any issues, please let me know and I will not fix it, because I'm done with this project.
-
 ## Features
 
 Key features of the AI server include:
@@ -14,9 +10,9 @@ Key features of the AI server include:
 
 2. **Retrieval-Augmented Generation (RAG)**: Dynamically determines when to retrieve additional information based on query similarity.
 
-3. **Speech-to-Text & Text-to-Speech**: Uses Hugging Face models for STT/TTS capabilities.
+3. **Speech-to-Text & Text-to-Speech**: Uses Hugging Face models or online APIs for STT/TTS capabilities.
 
-4. **Streaming Support**: Handles long-running AI tasks asynchronously.
+4. **Image input & Output**: Supports image input and output for diverse AI capabilities.
 
 5. **Logging and Monitoring**: Logs AI activities and errors for monitoring and debugging purposes.
 
@@ -78,13 +74,24 @@ Key features of the AI server include:
 
    You may change the model to any other model you have access to, but make sure to update the code accordingly. This can be done by changing the `LLM_MODEL_NAME` in the `model.py` file.
 
-   If you are using Docker, you can set the environment variable in the `docker-compose.yml` file. See [Docker Setup](../README.md#running-the-project-with-docker)
+   If you are using Docker, you can set the environment variable in the `docker-compose.yml` file. See [Docker Setup](../README.md#running-with-docker).
 
    ```env
    HUGGINGFACE_TOKEN=<your_huggingface_token_here>
    ```
 
-5. Run the AI server:
+5. If you're running the AI server in `--api-mode`, then you have to set more API keys in the .env file:
+
+   ```env
+   AZURE_API_ENDPOINT = <your_azure_ai_endpoint>
+   AZURE_API_KEY = <your_azure_ai_api_key>
+   GOOGLE_CLOUD_API_KEY = <your_tts_api_key> # A file pointer to a credentials.json
+   TOGETHER_API_KEY=<your_together_api_key>
+   ```
+
+   Do note that in the other branch, there will be more API keys, due to the different services used. But that is because I am too lazy to merge the branches, and that branch was designed to be running on a potato.
+
+6. Run the AI server:
 
    ```bash
    python ./app.py
@@ -92,7 +99,7 @@ Key features of the AI server include:
    python ./app.py --debug
    ```
 
-6. The AI server should now be running on `https://localhost:3001` or whatever port you specified in the `.env` file.
+7. The AI server should now be running on `https://localhost:3001` or whatever port you specified in the `.env` file.
 
 ## License
 
